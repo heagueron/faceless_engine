@@ -1,109 +1,104 @@
 import os
 import json
-from moviepy import ImageClip, AudioFileClip, concatenate_videoclips
 
-def create_scene_clip(image_path: str, audio_path: str, target_size=(1080, 1920)):
+try:
+    # MoviePy v2
+    from moviepy import ImageClip, AudioFileClip, concatenate_videoclips
+except ImportError:
+    # MoviePy v1 fallback
+    from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips
+
+
+def assemble_final_video(project_dir: str):
     """
-    Combina una imagen y un archivo de audio en un clip de video vertical.
-    Compatible con MoviePy v2.x.
+    Une las imágenes y audios de cada escena leídos directamente del manifest.json del proyecto.
     """
-    audio_clip = AudioFileClip(audio_path)
-    duration = audio_clip.duration
-
-    # En MoviePy v2.x, resized se aplica con .resized()
-    image_clip = (
-        ImageClip(image_path)
-        .with_duration(duration)
-        .resized(target_size)
-    )
-
-    # Vincular el audio al clip de video
-    video_clip = image_clip.with_audio(audio_clip)
-    return video_clip
-
-
-def assemble_final_video(project_dir: str = None):
-    """
-    Lee manifest.json desde la carpeta del proyecto, une los clips de cada escena
-    y exporta el video final MP4 dentro de la subcarpeta del proyecto.
-    """
-    if not project_dir:
-        # Fallback para pruebas independientes: buscar el proyecto más reciente en /projects
-        projects_base = "projects"
-        if os.path.exists(projects_base):
-            subdirs = [os.path.join(projects_base, d) for d in os.listdir(projects_base) if os.path.isdir(os.path.join(projects_base, d))]
-            if subdirs:
-                project_dir = max(subdirs, key=os.path.getmtime)
-
-    if not project_dir or not os.path.exists(project_dir):
-        raise FileNotFoundError("No se encontró un directorio de proyecto válido en /projects. Ejecuta primero main.py.")
-
     manifest_path = os.path.join(project_dir, "manifest.json")
-    output_video_path = os.path.join(project_dir, "final_short.mp4")
-
     if not os.path.exists(manifest_path):
-        raise FileNotFoundError(f"No se encontró el archivo: {manifest_path}")
+        raise FileNotFoundError(f"No se encontró manifest.json en: {project_dir}")
 
     with open(manifest_path, "r", encoding="utf-8") as f:
         manifest = json.load(f)
 
-    print("=" * 80)
-    print(" ENSAMBLANDO VIDEO FINAL (MP4 9:16) - MOVIEPY V2")
-    print("=" * 80)
-
-    scene_clips = []
     scenes = manifest.get("scenes", [])
+    if not scenes:
+        raise ValueError("El manifest.json no contiene escenas.")
 
-    for scene in scenes:
-        scene_num = scene["scene_number"]
-        image_path = scene.get("image_file")
-        audio_path = scene.get("audio_file")
+    print("\n" + "=" * 80)
+    print(" 🎬 ENSAMBLANDO VIDEO FINAL (MOVIEPY 9:16)")
+    print("=" * 80)
 
-        if not image_path or not os.path.exists(image_path):
-            print(f" ⚠️ Salteando Escena {scene_num}: Imagen no encontrada ({image_path})")
+    clips = []
+
+    for idx, scene in enumerate(scenes, 1):
+        # Tomar la ruta guardada por media_fetcher o construir la correspondiente al proyecto
+        image_path = scene.get("image_path", os.path.join(project_dir, "images", f"scene_{idx}.jpg"))
+        audio_path = scene.get("audio_path", os.path.join(project_dir, "audio", f"scene_{idx}.mp3"))
+
+        if not os.path.exists(image_path):
+            print(f"❌ Error: La imagen para la Escena {idx} no existe en {image_path}")
             continue
 
-        if not audio_path or not os.path.exists(audio_path):
-            print(f" ⚠️ Salteando Escena {scene_num}: Audio no encontrado ({audio_path})")
+        if not os.path.exists(audio_path):
+            print(f"❌ Error: El audio para la Escena {idx} no existe en {audio_path}")
             continue
 
-        print(f"🎬 Procesando Escena {scene_num}...")
-        clip = create_scene_clip(image_path, audio_path)
-        scene_clips.append(clip)
-        print(f"   ✔ Clip creado ({clip.duration:.2f}s)")
+        print(f"\n🎬 Montando Escena {idx}:")
+        print(f"   🖼 Imagen: {image_path}")
+        print(f"   🎙 Audio:  {audio_path}")
 
-    if not scene_clips:
-        raise RuntimeError("No se pudieron generar clips para ensamblar.")
+        # Cargar audio para saber la duración real
+        audio_clip = AudioFileClip(audio_path)
+        duration = audio_clip.duration
+
+        # Cargar imagen y ajustar duración
+        img_clip = ImageClip(image_path)
+        if hasattr(img_clip, 'with_duration'):
+            img_clip = img_clip.with_duration(duration)
+        else:
+            img_clip = img_clip.set_duration(duration)
+
+        # Redimensionar a 1080x1920 (Shorts/Reels 9:16)
+        if hasattr(img_clip, 'resized'):
+            img_clip = img_clip.resized(new_size=(1080, 1920))
+        elif hasattr(img_clip, 'resize'):
+            img_clip = img_clip.resize(newsize=(1080, 1920))
+
+        # Asignar audio al clip de video
+        if hasattr(img_clip, 'with_audio'):
+            clip_with_audio = img_clip.with_audio(audio_clip)
+        else:
+            clip_with_audio = img_clip.set_audio(audio_clip)
+
+        clips.append(clip_with_audio)
+        print(f"   ✔ Clip {idx} creado ({duration:.2f}s)")
+
+    if not clips:
+        raise RuntimeError("No se pudieron generar los clips para el video final.")
 
     print("\n🎞 Concatenando escenas...")
-    final_video = concatenate_videoclips(scene_clips, method="compose")
+    final_video = concatenate_videoclips(clips, method="compose")
 
-    print(f"🚀 Exportando video a: {output_video_path}")
-    print("   (Esto puede tomar unos segundos)...")
+    output_video_path = os.path.join(project_dir, "final_short.mp4")
+    print(f"🚀 Exportando video a: {output_video_path}\n")
 
     final_video.write_videofile(
         output_video_path,
-        fps=30,
+        fps=24,
         codec="libx264",
         audio_codec="aac",
-        threads=4,
-        logger=None
+        preset="ultrafast",
+        threads=4
     )
 
-    # Liberar memoria
-    for clip in scene_clips:
-        clip.close()
+    # Liberar memoria de los clips
+    for c in clips:
+        c.close()
     final_video.close()
 
     print("\n" + "=" * 80)
-    print(" ¡VIDEO GENERADO EXITOSAMENTE!")
-    print("=" * 80)
-    print(f" Archivo listo en: {output_video_path}")
+    print(" 🎉 ¡VIDEO GENERADO EXITOSAMENTE!")
+    print(f" 📂 Archivo: {output_video_path}")
     print("=" * 80)
 
-
-if __name__ == "__main__":
-    try:
-        assemble_final_video()
-    except Exception as e:
-        print(f"\n❌ Error en el ensamblado de video: {e}")
+    return output_video_path
