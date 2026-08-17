@@ -1,76 +1,69 @@
 import os
-import json
 import time
-import sys
-import threading
-from typing import List, Optional
+import json
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
 
+# Cargar variables de entorno desde .env
 load_dotenv()
 
 
-# ============================================================================
-# 1. ESQUEMA DE DATOS CON PYDANTIC
-# ============================================================================
+# --- ESQUEMAS DE DATOS (PYDANTIC) ---
 
-class ScriptScene(BaseModel):
+class Scene(BaseModel):
     scene_number: int = Field(description="Número secuencial de la escena (1, 2, 3...)")
-    narration_text: str = Field(description="Texto exacto que leerá la voz en off AI en español.")
-    visual_prompt: str = Field(
-        description="Prompt detallado en INGLÉS para la generación de imagen (fotorrealista, 8k)."
-    )
-    camera_movement: str = Field(
-        description="Efecto visual o movimiento de cámara (ej: zoom-in, pan-left, static)."
-    )
+    narration_text: str = Field(description="Texto en español que dirá la voz en off para esta escena")
+    visual_prompt: str = Field(description="Prompt visual ultradetallado en INGLÉS para la imagen o video de apoyo")
 
 
 class ScriptManifest(BaseModel):
-    video_title: str = Field(description="Título llamativo y optimizado para el video.")
-    target_niche: str = Field(description="Nicho o tema analizado.")
-    estimated_duration_seconds: int = Field(description="Duración aproximada total en segundos.")
-    scenes: List[ScriptScene] = Field(description="Lista ordenada de las escenas del guion.")
+    title: str = Field(description="Título sugerido y atractivo para el video o Short")
+    target_duration_seconds: int = Field(description="Duración estimada del video completo")
+    scenes: list[Scene] = Field(description="Lista ordenada de las escenas que componen el guion")
 
 
-# ============================================================================
-# 2. INDICADOR DE PROGRESO (SPINNER EN CONSOLA)
-# ============================================================================
+# --- HELPER INTERACTIVO ---
 
-class ConsoleSpinner:
-    def __init__(self, message: str = "Procesando"):
-        self.message = message
-        self.running = False
-        self.thread = None
+def get_user_topic_selection(default_topics: list) -> str:
+    """
+    Permite al usuario elegir un número de la lista de tendencias 
+    o escribir su propio tema/título personalizado.
+    """
+    print("\n" + "=" * 80)
+    print(" SELECCIÓN DE TEMA / CONCEPTO PARA EL GUION")
+    print("=" * 80)
+    
+    for idx, topic in enumerate(default_topics, start=1):
+        print(f"  [{idx}] {topic}")
+    
+    print("-" * 80)
+    user_input = input("👉 Ingresa el NÚMERO del tema o ESCRIBE tu propio concepto personalizado: ").strip()
 
-    def _spin(self):
-        chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
-        idx = 0
-        while self.running:
-            sys.stdout.write(f"\r  {chars[idx % len(chars)]} {self.message}...")
-            sys.stdout.flush()
-            idx += 1
-            time.sleep(0.1)
-        # Limpiar la línea al terminar
-        sys.stdout.write("\r" + " " * (len(self.message) + 10) + "\r")
-        sys.stdout.flush()
-
-    def start(self):
-        self.running = True
-        self.thread = threading.Thread(target=self._spin)
-        self.thread.daemon = True
-        self.thread.start()
-
-    def stop(self):
-        self.running = False
-        if self.thread:
-            self.thread.join()
+    # Opción 1: Número de lista
+    if user_input.isdigit():
+        index = int(user_input) - 1
+        if 0 <= index < len(default_topics):
+            selected = default_topics[index]
+            print(f"\n✔ Tema seleccionado de la lista: '{selected}'")
+            return selected
+        else:
+            print("\n⚠️ Número fuera de rango. Usando la primera opción por defecto.")
+            return default_topics[0]
+    
+    # Opción 2: Texto personalizado
+    elif len(user_input) > 0:
+        print(f"\n✔ Tema personalizado ingresado por el usuario: '{user_input}'")
+        return user_input
+    
+    # Opción 3: Enter vacío
+    else:
+        print(f"\n✔ Usando opción por defecto: '{default_topics[0]}'")
+        return default_topics[0]
 
 
-# ============================================================================
-# 3. LÓGICA DE GENERACIÓN CON GEMINI
-# ============================================================================
+# --- GENERADOR CON FALLBACK ---
 
 def generate_faceless_script(
     topic: str,
@@ -105,14 +98,13 @@ def generate_faceless_script(
 
     prompt = f"""
     Crea un guion ULTRACORTO de aproximadamente {target_duration} segundos (máximo 2 o 3 escenas, corto e impactante).
-    Tema / Video de referencia: "{topic}"
+    Tema / Concepto del video: "{topic}"
     """
 
     last_error = None
 
     for model_name in models_to_try:
-        spinner = ConsoleSpinner(f"Intentando con {model_name} ({target_duration}s)")
-        spinner.start()
+        print(f"⏳ Generando guion con {model_name} ({target_duration}s)...")
 
         try:
             chat = client.chats.create(
@@ -127,67 +119,59 @@ def generate_faceless_script(
 
             response = chat.send_message(prompt)
             manifest = ScriptManifest.model_validate_json(response.text)
-            spinner.stop()
             print(f"✔ Guion generado con éxito usando {model_name}\n")
             return manifest
 
         except Exception as e:
-            spinner.stop()
             last_error = e
-            # Si es error de demanda/503 o 404, prueba el siguiente modelo
-            print(f"  Aviso: {model_name} no disponible ({e}). Probando alternativa...")
+            print(f"  ⚠️ Aviso: {model_name} no disponible ({e}). Probando alternativa...\n")
             time.sleep(1)
 
     raise RuntimeError(f"Todos los modelos de la lista fallaron. Último error: {last_error}")
 
 
-# ============================================================================
-# 4. EJECUCIÓN PRINCIPAL
-# ============================================================================
+# --- EJECUCIÓN PRINCIPAL ---
 
 if __name__ == "__main__":
-    trend_file = os.path.join("output", "selected_trend.json")
-    niche_topic = "Hábitos financieros para construir riqueza"
+    # Simulación de tendencias extraídas previamente
+    sample_trends = [
+        "Cómo Romper los Hábitos que te Hacen Pobre y Construir Riqueza | Brian Tracy",
+        "5 Reglas de Oro para Gestionar tu Dinero en 2026",
+        "Por qué la Clase Media se Queda Atrapada en la Carrera de Ratas"
+    ]
 
-    if os.path.exists(trend_file):
-        try:
-            with open(trend_file, "r", encoding="utf-8") as f:
-                trend_data = json.load(f)
-                niche_topic = trend_data.get("title", niche_topic)
-                print(f" Carga exitosa: Usando tema seleccionado de YouTube:\n 👉 '{niche_topic}'\n")
-        except Exception as e:
-            print(f" Advertencia: No se pudo leer {trend_file}, usando tema por defecto. Error: {e}")
-    else:
-        print(f" No se encontró '{trend_file}'. Usando tema por defecto: '{niche_topic}'\n")
+    # Entrada interactiva: Número o Texto libre
+    niche_topic = get_user_topic_selection(sample_trends)
 
     try:
-        #  Configurado a 15 segundos para acelerar la prueba local
         script_manifest = generate_faceless_script(
             topic=niche_topic,
             target_duration=15,
             primary_model="models/gemini-3.7-flash"
         )
 
-        output_path = os.path.join("output", "script_manifest.json")
-        os.makedirs("output", exist_ok=True)
+        output_dir = "output"
+        os.makedirs(output_dir, exist_ok=True)
+        file_path = os.path.join(output_dir, "script_manifest.json")
 
-        with open(output_path, "w", encoding="utf-8") as f:
+        with open(file_path, "w", encoding="utf-8") as f:
             f.write(script_manifest.model_dump_json(indent=2))
 
-        print("✔ Guion recibido correctamente de Gemini.\n")
         print("=" * 80)
-        print(" GUION GENERADO EXITOSAMENTE (MODO PRUEBA RÁPIDA)")
+        print(" GUION GENERADO EXITOSAMENTE")
         print("=" * 80)
-        print(f" Título del Video: {script_manifest.video_title}")
-        print(f" Duración estimada: {script_manifest.estimated_duration_seconds} segundos")
+        print(f" Título del Video: {script_manifest.title}")
+        print(f" Duración estimada: {script_manifest.target_duration_seconds} segundos")
         print(f" Cantidad de escenas: {len(script_manifest.scenes)}")
         print("-" * 80)
+
         for scene in script_manifest.scenes:
             print(f" Escena {scene.scene_number}:")
             print(f"   Locución: \"{scene.narration_text}\"")
             print(f"   Prompt Visual: {scene.visual_prompt[:60]}...")
+
         print("=" * 80)
-        print(f" Archivo guardado en: {output_path}")
+        print(f" Archivo guardado en: {file_path}")
 
     except Exception as e:
-        print(f" Error generando el guion: {e}")
+        print(f"\n❌ Error generando el guion: {e}")
