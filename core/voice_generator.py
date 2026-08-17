@@ -15,21 +15,31 @@ def generate_scene_audio(text: str, output_path: str, lang: str = "es") -> float
     return round(audio.info.length, 2)
 
 
-def process_script_audio():
+def generate_voice_over(project_dir: str = None):
     """
-    Lee output/script_manifest.json, genera el audio de cada escena
-    y guarda el resultado enriquecido con rutas de audio y duraciones.
+    Lee manifest.json desde la carpeta del proyecto, genera los audios de cada escena,
+    guarda los .mp3 en <project_dir>/audio y actualiza manifest.json con las rutas y duraciones.
     """
-    input_file = os.path.join("output", "script_manifest.json")
-    audio_dir = os.path.join("output", "audio")
-    output_file = os.path.join("output", "script_manifest_with_audio.json")
+    if not project_dir:
+        # Fallback para pruebas independientes: buscar el proyecto más reciente en /projects
+        projects_base = "projects"
+        if os.path.exists(projects_base):
+            subdirs = [os.path.join(projects_base, d) for d in os.listdir(projects_base) if os.path.isdir(os.path.join(projects_base, d))]
+            if subdirs:
+                project_dir = max(subdirs, key=os.path.getmtime)
 
-    if not os.path.exists(input_file):
-        raise FileNotFoundError(f"No se encontró el archivo: {input_file}. Ejecuta primero script_generator.py.")
+    if not project_dir or not os.path.exists(project_dir):
+        raise FileNotFoundError("No se encontró un directorio de proyecto válido en /projects. Ejecuta primero main.py o script_generator.py.")
+
+    manifest_path = os.path.join(project_dir, "manifest.json")
+    audio_dir = os.path.join(project_dir, "audio")
+
+    if not os.path.exists(manifest_path):
+        raise FileNotFoundError(f"No se encontró el archivo: {manifest_path}. Ejecuta primero la generación de guion.")
 
     os.makedirs(audio_dir, exist_ok=True)
 
-    with open(input_file, "r", encoding="utf-8") as f:
+    with open(manifest_path, "r", encoding="utf-8") as f:
         manifest = json.load(f)
 
     print("=" * 80)
@@ -40,36 +50,51 @@ def process_script_audio():
 
     for scene in manifest.get("scenes", []):
         scene_num = scene["scene_number"]
-        text = scene["narration_text"]
+        # Soporte para ambas llaves ('narration_text' o 'narration')
+        text = scene.get("narration_text") or scene.get("narration", "")
+
+        if not text:
+            print(f" ⚠️ Escena {scene_num}: No tiene texto de locución, salteando...")
+            continue
+
         audio_filename = f"scene_{scene_num}.mp3"
         audio_path = os.path.join(audio_dir, audio_filename)
 
         print(f"🎙 Generando voz para Escena {scene_num}...")
         print(f"   Texto: \"{text}\"")
 
-        duration = generate_scene_audio(text, audio_path)
-        
-        # Enriquecer la escena con los metadatos de audio
-        scene["audio_file"] = audio_path
-        scene["audio_duration_seconds"] = duration
-        total_duration += duration
+        try:
+            duration = generate_scene_audio(text, audio_path)
+            
+            # Enriquecer la escena con los metadatos de audio
+            scene["audio_file"] = audio_path
+            scene["audio_duration_seconds"] = duration
+            total_duration += duration
 
-        print(f"   ✔ Guardado: {audio_path} ({duration}s)\n")
+            print(f"   ✔ Guardado: {audio_path} ({duration}s)\n")
+        except Exception as e:
+            print(f"   ❌ Error generando audio para Escena {scene_num}: {e}\n")
+            scene["audio_file"] = None
 
     manifest["total_audio_duration_seconds"] = round(total_duration, 2)
 
-    with open(output_file, "w", encoding="utf-8") as f:
+    # Sobrescribir el manifiesto único dentro del proyecto
+    with open(manifest_path, "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2, ensure_ascii=False)
 
     print("=" * 80)
     print(" PROCESO DE AUDIO COMPLETADO")
     print(f" Duración total de voz: {round(total_duration, 2)} segundos")
-    print(f" Manifiesto actualizado en: {output_file}")
+    print(f" Manifiesto actualizado en: {manifest_path}")
     print("=" * 80)
+
+
+# Alias para mantener compatibilidad con ambas llamadas
+process_script_audio = generate_voice_over
 
 
 if __name__ == "__main__":
     try:
-        process_script_audio()
+        generate_voice_over()
     except Exception as e:
-        print(f"❌ Error en la generación de audio: {e}")
+        print(f"\n❌ Error en la generación de audio: {e}")

@@ -10,7 +10,7 @@ def create_scene_clip(image_path: str, audio_path: str, target_size=(1080, 1920)
     audio_clip = AudioFileClip(audio_path)
     duration = audio_clip.duration
 
-    # En MoviePy v2.x, resized se aplica con .resized() o manteniendo el tamaño original
+    # En MoviePy v2.x, resized se aplica con .resized()
     image_clip = (
         ImageClip(image_path)
         .with_duration(duration)
@@ -22,21 +22,29 @@ def create_scene_clip(image_path: str, audio_path: str, target_size=(1080, 1920)
     return video_clip
 
 
-def assemble_final_video():
+def assemble_final_video(project_dir: str = None):
     """
-    Lee script_manifest_complete.json, une los clips de cada escena
-    y exporta el video final MP4.
+    Lee manifest.json desde la carpeta del proyecto, une los clips de cada escena
+    y exporta el video final MP4 dentro de la subcarpeta del proyecto.
     """
-    input_file = os.path.join("output", "script_manifest_complete.json")
-    output_dir = os.path.join("output", "renders")
-    output_video_path = os.path.join(output_dir, "final_short.mp4")
+    if not project_dir:
+        # Fallback para pruebas independientes: buscar el proyecto más reciente en /projects
+        projects_base = "projects"
+        if os.path.exists(projects_base):
+            subdirs = [os.path.join(projects_base, d) for d in os.listdir(projects_base) if os.path.isdir(os.path.join(projects_base, d))]
+            if subdirs:
+                project_dir = max(subdirs, key=os.path.getmtime)
 
-    if not os.path.exists(input_file):
-        raise FileNotFoundError(f"No se encontró el archivo: {input_file}")
+    if not project_dir or not os.path.exists(project_dir):
+        raise FileNotFoundError("No se encontró un directorio de proyecto válido en /projects. Ejecuta primero main.py.")
 
-    os.makedirs(output_dir, exist_ok=True)
+    manifest_path = os.path.join(project_dir, "manifest.json")
+    output_video_path = os.path.join(project_dir, "final_short.mp4")
 
-    with open(input_file, "r", encoding="utf-8") as f:
+    if not os.path.exists(manifest_path):
+        raise FileNotFoundError(f"No se encontró el archivo: {manifest_path}")
+
+    with open(manifest_path, "r", encoding="utf-8") as f:
         manifest = json.load(f)
 
     print("=" * 80)
@@ -98,4 +106,4 @@ if __name__ == "__main__":
     try:
         assemble_final_video()
     except Exception as e:
-        print(f"❌ Error en el ensamblado de video: {e}")
+        print(f"\n❌ Error en el ensamblado de video: {e}")

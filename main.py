@@ -1,100 +1,62 @@
-import sys
-import time
 import os
-
-# Importación de los 5 módulos de la tubería
-from core.trend_analyzer import fetch_niche_trends, display_trends_summary
-from core.script_generator import generate_faceless_script, get_user_topic_selection
-from core.voice_generator import process_script_audio
+import re
+from datetime import datetime
+from core.trend_analyzer import get_selected_topic
+from core.script_generator import generate_script
+from core.voice_generator import generate_voice_over
 from core.media_fetcher import process_scene_media
 from core.video_composer import assemble_final_video
 
+def slugify(text: str) -> str:
+    """Convierte un tema en un nombre de carpeta seguro (slug)."""
+    text = text.lower().strip()
+    text = re.sub(r'[^\w\s-]', '', text)
+    return re.sub(r'[-\s]+', '_', text)[:30]
+
+def create_project_dir(topic: str) -> str:
+    """Crea un directorio único basado en timestamp y tema dentro de /projects."""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    slug = slugify(topic)
+    project_dir = os.path.join("projects", f"{timestamp}_{slug}")
+    os.makedirs(project_dir, exist_ok=True)
+    return project_dir
 
 def run_pipeline():
-    """
-    Orquestador principal del motor de creación de videos (MVP).
-    Ejecuta en secuencia:
-    [ trend_analyzer ] ➔ [ script_generator ] ➔ [ voice_generator ] ➔ [ media_fetcher ] ➔ [ video_composer ]
-    """
+    """Ejecuta el flujo completo pidiendo primero el nicho a YouTube."""
+    # 1. Investigar nicho y seleccionar tema interactivo desde YouTube
+    topic = get_selected_topic()
+
     print("\n" + "=" * 80)
-    print("🚀 FACELESS ENGINE - INICIANDO PIPELINE DE CREACIÓN DE VIDEO")
+    print(f"🚀 INICIANDO PIPELINE DE VIDEO PARA: '{topic}'")
     print("=" * 80)
 
-    # -------------------------------------------------------------------------
-    # PASO 0: BÚSQUEDA Y ANÁLISIS DE TENDENCIAS (YouTube Data API)
-    # -------------------------------------------------------------------------
-    print("\n[ PASO 0/4 ] Analizando tendencias en YouTube...")
-    search_query = input("👉 Ingresa el nicho o tema a buscar en YouTube (Ej: 'finanzas personales'): ").strip()
-    if not search_query:
-        search_query = "finanzas personales"
-        print(f"   Buscando término por defecto: '{search_query}'")
+    # 2. Crear directorio de trabajo
+    project_dir = create_project_dir(topic)
+    print(f"📁 Directorio de trabajo: {project_dir}\n")
 
-    try:
-        raw_trends = fetch_niche_trends(query=search_query, max_results=10)
-        display_trends_summary(raw_trends)
-        
-        # Extraer únicamente los títulos de los videos de la lista de objetos TrendVideo
-        trend_titles = [video.title for video in raw_trends]
-    except Exception as e:
-        print(f"⚠️ No se pudieron obtener tendencias en vivo ({e}). Usando lista de respaldo.")
-        trend_titles = [
-            "Cómo Romper los Hábitos que te Hacen Pobre y Construir Riqueza | Brian Tracy",
-            "5 Reglas de Oro para Gestionar tu Dinero en 2026",
-            "Por qué la Clase Media se Queda Atrapada en la Carrera de Ratas"
-        ]
+    # 3. Generar guion y manifiesto inicial
+    print("Step 1/4: Generando guion con Gemini...")
+    generate_script(topic=topic, project_dir=project_dir)
 
-    # Intervención Humana: Selección por número o texto personalizado
-    selected_topic = get_user_topic_selection(trend_titles)
+    # 4. Generar locuciones de audio
+    print("\nStep 2/4: Generando audio TTS...")
+    generate_voice_over(project_dir=project_dir)
 
-    start_time = time.time()
+    # 5. Descargar imágenes por escena
+    print("\nStep 3/4: Buscando recursos visuales...")
+    process_scene_media(project_dir=project_dir)
 
-    # -------------------------------------------------------------------------
-    # PASO 1: GENERACIÓN DE GUION (Gemini API con Fallback)
-    # -------------------------------------------------------------------------
-    print("\n[ PASO 1/4 ] Generando Guion con Gemini API...")
-    script_manifest = generate_faceless_script(
-        topic=selected_topic,
-        target_duration=15,
-        primary_model="models/gemini-3.7-flash"
-    )
-
-    os.makedirs("output", exist_ok=True)
-    with open(os.path.join("output", "script_manifest.json"), "w", encoding="utf-8") as f:
-        f.write(script_manifest.model_dump_json(indent=2))
-
-    # -------------------------------------------------------------------------
-    # PASO 2: GENERACIÓN DE VOZ Y DURAClONES (gTTS + Mutagen)
-    # -------------------------------------------------------------------------
-    print("\n[ PASO 2/4 ] Generando Audios y Calculando Metadatos (TTS)...")
-    process_script_audio()
-
-    # -------------------------------------------------------------------------
-    # PASO 3: DESCARGA DE RECURSOS VISUALES (Media Fetcher)
-    # -------------------------------------------------------------------------
-    print("\n[ PASO 3/4 ] Descargando Recursos Visuales por Escena...")
-    process_scene_media()
-
-    # -------------------------------------------------------------------------
-    # PASO 4: ENSAMBLADO Y RENDERIZADO DEL VIDEO (MoviePy MP4)
-    # -------------------------------------------------------------------------
-    print("\n[ PASO 4/4 ] Renderizando Video Final MP4 (9:16)...")
-    assemble_final_video()
-
-    total_time = round(time.time() - start_time, 2)
+    # 6. Ensamblar video final
+    print("\nStep 4/4: Renderizando video MP4...")
+    assemble_final_video(project_dir=project_dir)
 
     print("\n" + "=" * 80)
-    print(" ¡PROCESO COMPLETO FINALIZADO EXITOSAMENTE!")
-    print(f"⏱  Tiempo total de procesamiento: {total_time} segundos")
-    print("📁 Video final generado en: output/renders/final_short.mp4")
-    print("=" * 80 + "\n")
-
+    print("🎉 PIPELINE COMPLETADO CON ÉXITO")
+    print(f"📂 Proyecto generado en: {project_dir}")
+    print("=" * 80)
 
 if __name__ == "__main__":
     try:
         run_pipeline()
-    except KeyboardInterrupt:
-        print("\n\n⚠️ Proceso interrumpido por el usuario.")
-        sys.exit(0)
     except Exception as e:
-        print(f"\n❌ Error crítico en el pipeline: {e}")
-        sys.exit(1)
+        print(f"\n❌ Falla durante la ejecución: {e}")

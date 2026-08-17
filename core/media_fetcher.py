@@ -26,31 +26,39 @@ def extract_keywords(visual_prompt: str) -> str:
     Limpia y extrae las palabras clave más descriptivas del prompt en inglés
     para pasarlas al motor de búsqueda de imágenes.
     """
-    # Palabras comunes a ignorar en búsquedas
     stopwords = {"cinematic", "macro", "shot", "lighting", "dramatic", "hyperrealistic", "8k", "fotorrealista", "close-up", "a", "of", "in", "on", "and", "the", "with"}
     words = [w.strip(".,'\"") for w in visual_prompt.lower().split()]
     keywords = [w for w in words if w not in stopwords and len(w) > 2]
     
-    # Tomar de 2 a 3 palabras clave relevantes
     selected = keywords[:3] if keywords else ["finance", "business"]
     return ",".join(selected)
 
 
-def process_scene_media():
+def process_scene_media(project_dir: str = None):
     """
-    Lee script_manifest_with_audio.json, obtiene recursos visuales dinámicos
-    en formato vertical (9:16) y actualiza el manifiesto final.
+    Lee manifest.json desde la carpeta del proyecto, obtiene recursos visuales dinámicos
+    en formato vertical (9:16) y actualiza el manifiesto dentro de la carpeta del proyecto.
     """
-    input_file = os.path.join("output", "script_manifest_with_audio.json")
-    images_dir = os.path.join("output", "images")
-    output_file = os.path.join("output", "script_manifest_complete.json")
+    if not project_dir:
+        # Fallback para pruebas independientes: buscar el proyecto más reciente en /projects
+        projects_base = "projects"
+        if os.path.exists(projects_base):
+            subdirs = [os.path.join(projects_base, d) for d in os.listdir(projects_base) if os.path.isdir(os.path.join(projects_base, d))]
+            if subdirs:
+                project_dir = max(subdirs, key=os.path.getmtime)
 
-    if not os.path.exists(input_file):
-        raise FileNotFoundError(f"No se encontró el archivo: {input_file}. Ejecuta primero voice_generator.py.")
+    if not project_dir or not os.path.exists(project_dir):
+        raise FileNotFoundError("No se encontró un directorio de proyecto válido en /projects. Ejecuta primero main.py o voice_generator.py.")
+
+    manifest_path = os.path.join(project_dir, "manifest.json")
+    images_dir = os.path.join(project_dir, "images")
+
+    if not os.path.exists(manifest_path):
+        raise FileNotFoundError(f"No se encontró el archivo: {manifest_path}. Ejecuta primero la generación de voz.")
 
     os.makedirs(images_dir, exist_ok=True)
 
-    with open(input_file, "r", encoding="utf-8") as f:
+    with open(manifest_path, "r", encoding="utf-8") as f:
         manifest = json.load(f)
 
     print("=" * 80)
@@ -84,12 +92,13 @@ def process_scene_media():
         else:
             scene["image_file"] = None
 
-    with open(output_file, "w", encoding="utf-8") as f:
+    # Sobrescribir el manifiesto único dentro del proyecto
+    with open(manifest_path, "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2, ensure_ascii=False)
 
     print("=" * 80)
     print(" PROCESO VISUAL COMPLETADO EXITOSAMENTE")
-    print(f" Manifiesto completo de producción en: {output_file}")
+    print(f" Manifiesto completo de producción en: {manifest_path}")
     print("=" * 80)
 
 
@@ -97,4 +106,4 @@ if __name__ == "__main__":
     try:
         process_scene_media()
     except Exception as e:
-        print(f"❌ Error en el módulo visual: {e}")
+        print(f"\n❌ Error en el módulo visual: {e}")
