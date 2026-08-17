@@ -1,5 +1,6 @@
 import os
 import re
+import unicodedata
 from datetime import datetime
 from core.trend_analyzer import get_selected_topic
 from core.script_generator import generate_script
@@ -8,10 +9,11 @@ from core.media_fetcher import process_scene_media
 from core.video_composer import assemble_final_video
 
 def slugify(text: str) -> str:
-    """Convierte un tema en un nombre de carpeta seguro (slug)."""
+    """Convierte cualquier texto en un slug ASCII puro (sin acentos) para compatibilidad con el sistema de archivos."""
+    text = unicodedata.normalize('NFKD', text).encode('ascii', 'ignore').decode('utf-8')
     text = text.lower().strip()
     text = re.sub(r'[^\w\s-]', '', text)
-    return re.sub(r'[-\s]+', '_', text)[:30]
+    return re.sub(r'[-\s]+', '_', text)[:30].strip('_')
 
 def create_project_dir(topic: str) -> str:
     """Crea un directorio único basado en timestamp y tema dentro de /projects."""
