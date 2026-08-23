@@ -5,7 +5,7 @@ Motor de automatización para generar videos educativos y de entretenimiento usa
 
 ## Arquitectura y Módulos
 - `main.py`: Orquestador principal del pipeline.
-- `core/trend_analyzer.py`: Investigación de tendencias en YouTube.
+- `core/trend_analyzer.py`: Investigación de tendencias en YouTube y análisis de Ingeniería Inversa (Reverse Prompting) usando Gemini vía OpenRouter.
 - `core/script_generator.py`: Generación de guiones en JSON usando Gemini.
 - `core/voice_generator.py`: Síntesis de voz (TTS) para cada escena.
 - `core/media_fetcher.py`: Descarga y generación de imágenes (estilo 2D stick figure / cartoon).

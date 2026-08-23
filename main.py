@@ -26,10 +26,12 @@ def create_project_dir(topic: str) -> str:
 def run_pipeline():
     """Ejecuta el flujo completo pidiendo primero el nicho a YouTube."""
     # 1. Investigar nicho y seleccionar tema interactivo desde YouTube
-    topic = get_selected_topic()
+    topic, video_url = get_selected_topic()
 
     print("\n" + "=" * 80)
     print(f"🚀 INICIANDO PIPELINE DE VIDEO PARA: '{topic}'")
+    if video_url:
+        print(f"🔗 Video de referencia: {video_url}")
     print("=" * 80)
 
     # 2. Crear directorio de trabajo

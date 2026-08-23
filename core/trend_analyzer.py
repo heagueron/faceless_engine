@@ -1,9 +1,17 @@
 import os
+import re
 import json
 import argparse
 from datetime import datetime, timedelta
-from typing import List, Optional
+from typing import List, Optional, Tuple, Dict, Any
 from dotenv import load_dotenv
+import requests
+
+try:
+    from openai import OpenAI
+except ImportError:
+    OpenAI = None
+
 from googleapiclient.discovery import build
 from pydantic import BaseModel, Field
 
@@ -18,6 +26,194 @@ class TrendVideo(BaseModel):
     view_count: int
     daily_views_estimate: float = Field(description="Promedio de vistas diarias")
     video_url: str
+
+
+class ReversePromptingAnalysis(BaseModel):
+    gancho_inicial: str = Field(description="Análisis del gancho (0-3s).")
+    estructura_narrativa: str = Field(description="Desglose del conflicto, desarrollo y remate.")
+    estilo_visual_narrativo: str = Field(description="Ritmo de locución, tipo de gráficos, tono.")
+    patron_retencion: str = Field(description="Recurso usado para mantener el interés.")
+    areas_mejora: List[str] = Field(description="Oportunidades breves para superarlo.")
+
+
+def extract_video_id(url_or_id: str) -> Optional[str]:
+    """Extrae el ID de video de YouTube desde diversas estructuras de URL o texto plano."""
+    patterns = [
+        r'(?:v=|\/embed\/|\/v\/|youtu\.be\/|\/shorts\/)([0-9A-Za-z_-]{11})',
+        r'([0-9A-Za-z_-]{11})'
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, url_or_id)
+        if match:
+            return match.group(1)
+    return None
+
+
+def get_video_details(video_id: str) -> Optional[Dict[str, Any]]:
+    """Consulta la API de YouTube para obtener metadatos detallados de un video específico."""
+    api_key = os.getenv("YOUTUBE_API_KEY")
+    if not api_key:
+        return None
+    try:
+        youtube = build("youtube", "v3", developerKey=api_key)
+        response = youtube.videos().list(
+            part="snippet,statistics",
+            id=video_id
+        ).execute()
+        items = response.get("items", [])
+        if items:
+            snippet = items[0]["snippet"]
+            stats = items[0].get("statistics", {})
+            return {
+                "video_id": video_id,
+                "title": snippet.get("title", ""),
+                "description": snippet.get("description", ""),
+                "channel_title": snippet.get("channelTitle", ""),
+                "tags": snippet.get("tags", []),
+                "published_at": snippet.get("publishedAt", ""),
+                "view_count": int(stats.get("viewCount", 0)),
+                "like_count": int(stats.get("likeCount", 0)),
+                "video_url": f"https://www.youtube.com/watch?v={video_id}"
+            }
+    except Exception as e:
+        print(f"⚠️ No se pudieron obtener detalles completos desde YouTube API: {e}")
+    return None
+
+
+def analyze_video_reverse_prompting(
+    video_url: str,
+    title: Optional[str] = None,
+    model: str = "google/gemini-3.7-flash"
+) -> Optional[Dict[str, Any]]:
+    """
+    Realiza Ingeniería Inversa (Reverse Prompting) sobre un video de YouTube
+    usando la API de Gemini vía OpenRouter con margen seguro de tokens.
+    """
+    api_key = os.getenv("OPENROUTER_API_KEY")
+    if not api_key:
+        print("⚠️ Advertencia: OPENROUTER_API_KEY no encontrada en las variables de entorno (.env).")
+        return None
+
+    video_id = extract_video_id(video_url)
+    details = get_video_details(video_id) if video_id else None
+
+    video_title = (details.get("title") if details else None) or title or "Video de referencia"
+    channel_name = details.get("channel_title", "Desconocido") if details else "Desconocido"
+    description = details.get("description", "")[:500] if details else ""
+    tags = ", ".join(details.get("tags", []))[:200] if details else ""
+
+    print(f"\n🧠 Iniciando Ingeniería Inversa con {model}...")
+    print(f"   Video: '{video_title}' ({video_url})")
+
+    system_instruction = (
+        "Eres un analista experto de viralidad para YouTube Shorts.\n"
+        "REGLAS OBLIGATORIAS:\n"
+        "1. Responde ÚNICAMENTE con un objeto JSON válido.\n"
+        "2. NO incluyas saltos de línea ni comillas dobles dentro de los textos de cada campo.\n"
+        "3. Sé conciso: máximo 20 palabras por campo.\n\n"
+        "Esquema JSON requerido:\n"
+        "{\n"
+        '  "gancho_inicial": "Frase/elemento para frenar el scroll",\n'
+        '  "estructura_narrativa": "Conflicto, desarrollo y remate",\n'
+        '  "estilo_visual_narrativo": "Ritmo, gráficos, tono",\n'
+        '  "patron_retencion": "Recurso clave de retención",\n'
+        '  "areas_mejora": ["Mejora 1", "Mejora 2"]\n'
+        "}"
+    )
+
+    prompt = f"""
+Ingeniería inversa para este video:
+- Título: {video_title}
+- Canal: {channel_name}
+- Descripción: {description}
+- Tags: {tags}
+"""
+
+    raw_content = ""
+    try:
+        if OpenAI is not None:
+            client = OpenAI(
+                base_url="https://openrouter.ai/api/v1",
+                api_key=api_key,
+            )
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_instruction},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.2,
+                max_tokens=800,  # 👈 Subido a 800 para evitar truncamiento
+                response_format={"type": "json_object"}
+            )
+            raw_content = response.choices[0].message.content
+        else:
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": "https://github.com/faceless-engine",
+                "X-Title": "Faceless Engine"
+            }
+            payload = {
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": system_instruction},
+                    {"role": "user", "content": prompt}
+                ],
+                "temperature": 0.2,
+                "max_tokens": 800,  # 👈 Subido a 800 para evitar truncamiento
+                "response_format": {"type": "json_object"}
+            }
+            res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload, timeout=30)
+            res.raise_for_status()
+            res_data = res.json()
+            raw_content = res_data["choices"][0]["message"]["content"]
+
+        # Limpieza de markdown
+        clean_json_str = raw_content.strip()
+        if clean_json_str.startswith("```"):
+            clean_json_str = re.sub(r"^```[a-zA-Z]*\n?", "", clean_json_str)
+            clean_json_str = re.sub(r"\n?```$", "", clean_json_str).strip()
+
+        analysis_dict = json.loads(clean_json_str)
+        validated_analysis = ReversePromptingAnalysis.model_validate(analysis_dict)
+        final_result = validated_analysis.model_dump()
+
+        # Guardar en output
+        os.makedirs("output", exist_ok=True)
+        analysis_path = os.path.join("output", "reverse_prompting_analysis.json")
+        with open(analysis_path, "w", encoding="utf-8") as f:
+            json.dump({
+                "video_url": video_url,
+                "title": video_title,
+                "analysis": final_result
+            }, f, ensure_ascii=False, indent=2)
+
+        display_reverse_prompting_summary(video_title, final_result)
+        return final_result
+
+    except json.JSONDecodeError as jde:
+        print(f"❌ Error al parsear JSON devuelto por el modelo: {jde}")
+        print(f"📄 Respuesta cruda recibida:\n{raw_content}")
+        return None
+    except Exception as e:
+        print(f"❌ Error al realizar Ingeniería Inversa vía OpenRouter: {e}")
+        return None
+
+
+def display_reverse_prompting_summary(title: str, analysis: Dict[str, Any]):
+    """Muestra en consola el resumen formateado de la ingeniería inversa."""
+    print("\n" + "=" * 85)
+    print(f" 🔬 RESULTADO DE INGENIERÍA INVERSA: '{title}'")
+    print("=" * 85)
+    print(f"🎣 Gancho Inicial (0-3s):\n   {analysis.get('gancho_inicial')}\n")
+    print(f"🧱 Estructura Narrativa:\n   {analysis.get('estructura_narrativa')}\n")
+    print(f"🎨 Estilo Visual y Narrativo:\n   {analysis.get('estilo_visual_narrativo')}\n")
+    print(f"🧲 Patrón de Retención:\n   {analysis.get('patron_retencion')}\n")
+    print("💡 Áreas de Mejora para Superar el Video:")
+    for i, mejora in enumerate(analysis.get("areas_mejora", []), 1):
+        print(f"   {i}. {mejora}")
+    print("=" * 85 + "\n")
 
 
 def fetch_niche_trends(
@@ -37,7 +233,6 @@ def fetch_niche_trends(
 
     try:
         youtube = build("youtube", "v3", developerKey=api_key)
-
         published_after = (datetime.utcnow() - timedelta(days=days_back)).isoformat() + "Z"
 
         print(f"\n🔍 Buscando tendencias en YouTube para: '{query}'")
@@ -63,7 +258,6 @@ def fetch_niche_trends(
             print("⚠️ No se encontraron videos en YouTube con esos criterios.")
             return []
 
-        # Consultar estadísticas exactas de reproducciones
         stats_response = youtube.videos().list(
             part="snippet,statistics",
             id=",".join(video_ids)
@@ -89,11 +283,10 @@ def fetch_niche_trends(
                 published_at=snippet["publishedAt"],
                 view_count=view_count,
                 daily_views_estimate=daily_views,
-                video_url=f"https://www.youtube.com/watch?v={item['id']}"
+                video_url=f"[https://www.youtube.com/watch?v=](https://www.youtube.com/watch?v=){item['id']}"
             )
             trends.append(trend)
 
-        # Ordenar por reproducciones diarias estimadas
         trends.sort(key=lambda x: x.daily_views_estimate, reverse=True)
         return trends
 
@@ -117,23 +310,39 @@ def display_trends_summary(trends: List[TrendVideo]):
     print("=" * 85)
 
 
-def get_selected_topic() -> str:
+def get_selected_topic() -> Tuple[str, str]:
     """
-    Función interactiva principal para main.py:
-    1. Solicita el nicho/palabra clave a investigar.
-    2. Consulta YouTube y muestra las estadísticas.
-    3. Permite elegir un título de la lista o ingresar uno personalizado.
+    Función interactiva principal para main.py.
     """
     print("\n" + "=" * 85)
     print(" 🔎 INVESTIGACIÓN DE NICHO Y TENDENCIAS EN YOUTUBE")
     print("=" * 85)
     
-    query_input = input("👉 Ingrese el NICHO o TEMA a investigar (ej: 'finanzas personales', 'productividad'): ").strip()
+    query_input = input("👉 Ingrese el NICHO, TEMA o URL de YouTube a investigar: ").strip()
     
+    if query_input.startswith("http://") or query_input.startswith("https://") or "youtube.com" in query_input or "youtu.be" in query_input:
+        video_url = query_input
+        video_id = extract_video_id(video_url)
+        details = get_video_details(video_id) if video_id else None
+        title = details.get("title") if details else ""
+        if not title:
+            title_in = input("✍️ Ingrese el título/tema para este video (opcional): ").strip()
+            title = title_in if title_in else "Video de referencia"
+
+        print(f"\n✔ URL detectada: {video_url}")
+        print(f"✔ Tema: '{title}'")
+        
+        analyze_video_reverse_prompting(video_url=video_url, title=title)
+        return title, video_url
+
     if not query_input:
         print("⚠️ No ingresaste una consulta de búsqueda.")
         fallback = input("✍️ Ingrese directamente el título/tema para el video: ").strip()
-        return fallback if fallback else "Consejos para mejorar tu productividad"
+        fallback_topic = fallback if fallback else "Consejos para mejorar tu productividad"
+        custom_url = input("🔗 Ingrese la URL del video (opcional, ENTER para omitir): ").strip()
+        if custom_url:
+            analyze_video_reverse_prompting(video_url=custom_url, title=fallback_topic)
+        return fallback_topic, custom_url
 
     days_input = input("⏳ Días hacia atrás a analizar [por defecto 30]: ").strip()
     days = int(days_input) if days_input.isdigit() else 30
@@ -146,41 +355,94 @@ def get_selected_topic() -> str:
     if results:
         display_trends_summary(results)
         print("🛑 INTERVENCIÓN HUMANA:")
-        choice = input("👉 Selecciona el número [1-N] del tema elegido O escribe un título personalizado: ").strip()
+        choice = input("👉 Selecciona el número [1-N] del tema elegido O escribe un título/URL personalizado: ").strip()
         
         if choice.isdigit():
             idx = int(choice) - 1
             if 0 <= idx < len(results):
                 selected = results[idx]
                 print(f"\n✔ Tema seleccionado de YouTube: '{selected.title}'")
+                print(f"✔ URL del video: '{selected.video_url}'")
                 
-                # Guardar el tema en archivo de intercambio
                 os.makedirs("output", exist_ok=True)
                 output_file = os.path.join("output", "selected_trend.json")
                 with open(output_file, "w", encoding="utf-8") as f:
                     json.dump(selected.model_dump(), f, ensure_ascii=False, indent=2)
                 
-                return selected.title
+                analyze_video_reverse_prompting(video_url=selected.video_url, title=selected.title)
+                return selected.title, selected.video_url
+
         elif len(choice) > 0:
-            print(f"\n✔ Tema personalizado ingresado: '{choice}'")
-            return choice
+            if choice.startswith("http://") or choice.startswith("https://") or "youtube.com" in choice or "youtu.be" in choice:
+                custom_url = choice
+                custom_title = input("✍️ Ingrese el título/tema para este video (ENTER para usar el término buscado): ").strip()
+                topic_result = custom_title if custom_title else query_input
+            else:
+                topic_result = choice
+                custom_url = input("🔗 Ingrese la URL del video de referencia (opcional, ENTER para omitir): ").strip()
+
+            print(f"\n✔ Tema personalizado: '{topic_result}'")
+            if custom_url:
+                print(f"✔ URL ingresada: '{custom_url}'")
+                analyze_video_reverse_prompting(video_url=custom_url, title=topic_result)
+
+            os.makedirs("output", exist_ok=True)
+            output_file = os.path.join("output", "selected_trend.json")
+            trend_data = {
+                "video_id": extract_video_id(custom_url) or "",
+                "title": topic_result,
+                "channel_title": "",
+                "published_at": datetime.utcnow().isoformat(),
+                "view_count": 0,
+                "daily_views_estimate": 0.0,
+                "video_url": custom_url
+            }
+            with open(output_file, "w", encoding="utf-8") as f:
+                json.dump(trend_data, f, ensure_ascii=False, indent=2)
+
+            return topic_result, custom_url
 
     print("\n✍️ Ingrese un título personalizado o presione ENTER para usar el término buscado:")
     custom_title = input(f"👉 [{query_input}]: ").strip()
-    return custom_title if custom_title else query_input
+    topic_result = custom_title if custom_title else query_input
+    custom_url = input("🔗 Ingrese la URL del video (opcional, ENTER para omitir): ").strip()
+
+    if custom_url:
+        analyze_video_reverse_prompting(video_url=custom_url, title=topic_result)
+
+    os.makedirs("output", exist_ok=True)
+    output_file = os.path.join("output", "selected_trend.json")
+    trend_data = {
+        "video_id": extract_video_id(custom_url) or "",
+        "title": topic_result,
+        "channel_title": "",
+        "published_at": datetime.utcnow().isoformat(),
+        "view_count": 0,
+        "daily_views_estimate": 0.0,
+        "video_url": custom_url
+    }
+    with open(output_file, "w", encoding="utf-8") as f:
+        json.dump(trend_data, f, ensure_ascii=False, indent=2)
+
+    return topic_result, custom_url
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Analizador de Tendencias de YouTube para Faceless Engine")
+    parser = argparse.ArgumentParser(description="Analizador de Tendencias e Ingeniería Inversa de YouTube para Faceless Engine")
     parser.add_argument("--query", type=str, help="Término o tema de búsqueda")
+    parser.add_argument("--url", type=str, help="URL de video individual para análisis por Ingeniería Inversa")
     parser.add_argument("--days", type=int, default=30, help="Días hacia atrás")
     parser.add_argument("--lang", type=str, default="es", help="Código de idioma (es, en)")
+    parser.add_argument("--model", type=str, default="google/gemini-3.7-flash", help="Modelo de Gemini en OpenRouter")
     
     args = parser.parse_args()
 
-    if args.query:
+    if args.url:
+        analyze_video_reverse_prompting(video_url=args.url, model=args.model)
+    elif args.query:
         trends = fetch_niche_trends(query=args.query, max_results=10, days_back=args.days, language=args.lang)
         display_trends_summary(trends)
     else:
-        topic = get_selected_topic()
+        topic, video_url = get_selected_topic()
         print(f"\n🎯 Tema final seleccionado: '{topic}'")
+        print(f"🔗 URL seleccionada / ingresada: '{video_url}'")
