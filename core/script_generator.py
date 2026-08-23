@@ -1,9 +1,17 @@
 import os
-import time
+import re
 import json
+import argparse
+from datetime import datetime
+from typing import List, Optional, Dict, Any
 from dotenv import load_dotenv
-from google import genai
-from google.genai import types
+import requests
+
+try:
+    from openai import OpenAI
+except ImportError:
+    OpenAI = None
+
 from pydantic import BaseModel, Field
 
 load_dotenv()
@@ -15,94 +23,312 @@ class Scene(BaseModel):
     scene_number: int = Field(description="Número secuencial de la escena (1, 2, 3...)")
     narration_text: str = Field(description="Texto en español que dirá la voz en off para esta escena")
     visual_prompt: str = Field(description="Prompt visual ultradetallado en INGLÉS para la imagen o video de apoyo")
+    audio_file: Optional[str] = Field(default=None, description="Ruta al archivo MP3 de la escena")
+    audio_duration_seconds: Optional[float] = Field(default=None, description="Duración exacta en segundos del audio")
+    image_path: Optional[str] = Field(default=None, description="Ruta a la imagen o video generado para la escena")
 
 
 class ScriptManifest(BaseModel):
     title: str = Field(description="Título sugerido y atractivo para el video o Short")
-    target_duration_seconds: int = Field(description="Duración estimada del video completo")
-    scenes: list[Scene] = Field(description="Lista ordenada de las escenas que componen el guion")
+    target_duration_seconds: int = Field(description="Duración estimada del video completo en segundos")
+    scenes: List[Scene] = Field(description="Lista ordenada de las escenas que componen el guion")
+    total_audio_duration_seconds: Optional[float] = Field(default=None, description="Duración acumulada de los audios")
 
 
-# --- GENERADOR CON FALLBACK DE MODELOS ---
+# --- MANEJO DE ESTRUCTURA DE PROYECTOS ---
 
-def generate_faceless_script(
-    topic: str,
+def slugify(text: str, max_words: int = 4) -> str:
+    """Convierte un título en un slug limpio usando las primeras N palabras."""
+    clean_text = re.sub(r"[^\w\s]", "", text.lower(), flags=re.UNICODE)
+    words = clean_text.split()[:max_words]
+    return "_".join(words) if words else "proyecto_faceless"
+
+
+def create_project_structure(title: str, base_projects_dir: str = "projects") -> str:
+    """Crea la carpeta timestamped del proyecto e interactúa con audio/ y images/."""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    folder_slug = slugify(title)
+    project_dir = os.path.join(base_projects_dir, f"{timestamp}_{folder_slug}")
+
+    os.makedirs(os.path.join(project_dir, "audio"), exist_ok=True)
+    os.makedirs(os.path.join(project_dir, "images"), exist_ok=True)
+
+    # Registrar el proyecto activo en output/current_project.json
+    os.makedirs("output", exist_ok=True)
+    current_proj_path = os.path.join("output", "current_project.json")
+    with open(current_proj_path, "w", encoding="utf-8") as f:
+        json.dump({"project_dir": project_dir, "title": title}, f, indent=2, ensure_ascii=False)
+
+    return project_dir
+
+
+# --- CARGA DE INPUTS PREVIOS ---
+
+def load_selected_idea() -> Optional[Dict[str, Any]]:
+    """Carga la idea seleccionada desde output/selected_idea.json."""
+    idea_path = os.path.join("output", "selected_idea.json")
+    if os.path.exists(idea_path):
+        try:
+            with open(idea_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                print(f"💡 Idea cargada desde '{idea_path}': '{data.get('selected_idea', {}).get('titulo', 'Sin título')}'")
+                return data
+        except Exception as e:
+            print(f"⚠️ No se pudo leer '{idea_path}': {e}")
+    return None
+
+
+def load_reverse_analysis() -> Optional[Dict[str, Any]]:
+    """Carga el análisis de ingeniería inversa si existe en output/."""
+    analysis_path = os.path.join("output", "reverse_prompting_analysis.json")
+    if os.path.exists(analysis_path):
+        try:
+            with open(analysis_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return data.get("analysis")
+        except Exception as e:
+            print(f"⚠️ No se pudo leer el análisis de ingeniería inversa: {e}")
+    return None
+
+
+# --- GENERADOR VIA OPENROUTER ---
+
+def generate_script_from_openrouter(
+    idea_data: Dict[str, Any],
+    reverse_analysis: Optional[Dict[str, Any]] = None,
     target_duration: int = 15,
-    primary_model: str = "models/gemini-3.6-flash"
-) -> ScriptManifest:
-    """
-    Genera un guion ultracorto utilizando la API de Gemini con los modelos actuales.
-    """
-    api_key = os.getenv("GEMINI_API_KEY")
+    model: str = "google/gemini-3.7-flash"
+) -> Optional[ScriptManifest]:
+    """Genera el guion enviando la idea seleccionada a OpenRouter."""
+    api_key = os.getenv("OPENROUTER_API_KEY")
     if not api_key:
-        raise ValueError("Error: GEMINI_API_KEY no encontrada en las variables de entorno (.env).")
+        print("❌ Error: OPENROUTER_API_KEY no encontrada en .env")
+        return None
 
-    client = genai.Client(api_key=api_key)
+    topic = idea_data.get("topic", "")
+    idea = idea_data.get("selected_idea", {})
 
-    models_to_try = list(dict.fromkeys([
-        primary_model,
-        "models/gemini-3.6-flash",
-        "models/gemini-3.5-flash"
-    ]))
+    print(f"\n🧠 Generando guion de {target_duration}s usando {model}...")
+
+    style_guidelines = ""
+    if reverse_analysis:
+        style_guidelines = (
+            f"- Estilo narrativo: {reverse_analysis.get('estilo_visual_narrativo', 'Dramático y directo')}\n"
+            f"- Recurso de retención: {reverse_analysis.get('patron_retencion', 'Cambios visuales constantes')}\n"
+        )
 
     system_instruction = (
-        "Eres un guionista experto en contenido viral ultracorto para YouTube Shorts, Reels y TikTok.\n"
-        "Tu objetivo es crear un guion MUY CORTO Y DIRECTO (máximo 2 a 3 escenas).\n\n"
+        "Eres un guionista experto en contenido viral ultracorto para YouTube Shorts, Reels y TikTok (9:16).\n"
+        "Tu objetivo es transformar la idea provista en un guion estructurado de 2 a 3 escenas.\n\n"
         "REGLAS OBLIGATORIAS:\n"
-        "1. Narración (narration_text): En ESPAÑOL, directo al punto, sin introducciones largas.\n"
-        "2. Prompts Visuales (visual_prompt): SIEMPRE en INGLÉS. Estilo cinematográfico, 8k, fotorrealista.\n"
-        "3. Duración: Estricta alineación a los segundos solicitados."
+        "1. Narración (narration_text): En ESPAÑOL, directo al punto, sin muletillas ni explicaciones innecesarias.\n"
+        "2. La Escena 1 DEBE iniciar directamente con el gancho inicial indicado.\n"
+        "3. La última escena DEBE incluir la conclusión/remate indicado.\n"
+        "4. Prompts Visuales (visual_prompt): SIEMPRE en INGLÉS. Estilo cinematográfico, 8k, photorealistic, 9:16 vertical ratio.\n"
+        "5. NO incluyas saltos de línea internos en los valores de texto del JSON.\n\n"
+        "Esquema JSON requerido:\n"
+        "{\n"
+        '  "title": "Título del video",\n'
+        f'  "target_duration_seconds": {target_duration},\n'
+        '  "scenes": [\n'
+        '    {\n'
+        '      "scene_number": 1,\n'
+        '      "narration_text": "Texto exacto de locución en español",\n'
+        '      "visual_prompt": "Detailed English prompt for image generation, cinematic 8k photorealistic"\n'
+        '    }\n'
+        '  ]\n'
+        "}"
     )
 
-    prompt = f"""
-    Crea un guion ULTRACORTO de aproximadamente {target_duration} segundos (máximo 2 o 3 escenas, corto e impactante).
-    Tema / Concepto del video: "{topic}"
-    """
+    user_prompt = f"""
+Tema general: {topic}
+Título/Idea: {idea.get('titulo', topic)}
+Gancho Obligatorio (0-3s): {idea.get('gancho_inicial', '')}
+Premisa/Desarrollo: {idea.get('resumen_premisa', '')}
+Remate/Giro Final: {idea.get('remate_o_giro', '')}
 
-    last_error = None
+{style_guidelines}
+Duración objetivo: {target_duration} segundos.
+Genera entre 2 y 3 escenas máximo.
+"""
 
-    for model_name in models_to_try:
-        print(f"⏳ Generando guion con {model_name} ({target_duration}s)...")
-
-        try:
-            response = client.models.generate_content(
-                model=model_name,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    system_instruction=system_instruction,
-                    response_mime_type="application/json",
-                    response_schema=ScriptManifest,
-                    temperature=0.7,
-                )
+    raw_content = ""
+    try:
+        if OpenAI is not None:
+            client = OpenAI(
+                base_url="https://openrouter.ai/api/v1",
+                api_key=api_key,
             )
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_instruction},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.7,
+                max_tokens=2500,
+                response_format={"type": "json_object"},
+                extra_body={"reasoning": {"effort": "low"}}
+            )
+            raw_content = response.choices[0].message.content
+        else:
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": "https://github.com/faceless-engine",
+                "X-Title": "Faceless Engine"
+            }
+            payload = {
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": system_instruction},
+                    {"role": "user", "content": user_prompt}
+                ],
+                "temperature": 0.7,
+                "max_tokens": 2500,
+                "response_format": {"type": "json_object"},
+                "reasoning": {"effort": "low"}
+            }
+            res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload, timeout=30)
+            res.raise_for_status()
+            res_data = res.json()
+            raw_content = res_data["choices"][0]["message"]["content"]
 
-            manifest = ScriptManifest.model_validate_json(response.text)
-            print(f"✔ Guion generado con éxito usando {model_name}\n")
-            return manifest
+        clean_json_str = raw_content.strip()
+        if clean_json_str.startswith("```"):
+            clean_json_str = re.sub(r"^```[a-zA-Z]*\n?", "", clean_json_str)
+            clean_json_str = re.sub(r"\n?```$", "", clean_json_str).strip()
 
-        except Exception as e:
-            last_error = e
-            print(f"  ⚠️ Aviso: {model_name} no disponible ({e}). Probando alternativa...\n")
-            time.sleep(1)
+        manifest_dict = json.loads(clean_json_str)
+        return ScriptManifest.model_validate(manifest_dict)
 
-    raise RuntimeError(f"Todos los modelos de la lista fallaron. Último error: {last_error}")
+    except Exception as e:
+        print(f"❌ Error al generar el guion vía OpenRouter: {e}")
+        if raw_content:
+            print(f"📄 Respuesta cruda:\n{raw_content}")
+        return None
 
 
-# --- FUNCIÓN DE ENTRADA PARA MAIN.PY ---
+# --- REVISIÓN Y EDICIÓN INTERACTIVA ---
 
-def generate_script(topic: str, project_dir: str, target_duration: int = 15) -> dict:
-    os.makedirs(project_dir, exist_ok=True)
-    manifest_path = os.path.join(project_dir, "manifest.json")
+def display_and_review_script(manifest: ScriptManifest) -> ScriptManifest:
+    """Muestra el guion en consola y permite ajustes manuales directos."""
+    data = manifest.model_dump()
 
-    script_manifest = generate_faceless_script(
-        topic=topic,
-        target_duration=target_duration
+    while True:
+        print("\n" + "=" * 85)
+        print(f" 📜 GUION GENERADO: '{data['title']}' ({data['target_duration_seconds']}s)")
+        print("=" * 85)
+
+        for sc in data["scenes"]:
+            print(f"\n🎬 ESCENA {sc['scene_number']}:")
+            print(f"   🗣️  Locución (ES): \"{sc['narration_text']}\"")
+            print(f"   🖼️  Visual Prompt (EN): {sc['visual_prompt']}")
+
+        print("\n" + "=" * 85)
+        print("🛑 REVISIÓN E INTERVENCIÓN HUMANA:")
+        print("👉 Presiona [ENTER] o '1' para APROBAR el guion.")
+        print("👉 Escribe '2' para editar una escena específica.")
+        print("👉 Escribe '3' para cambiar el título del video.")
+
+        opt = input("\nSelección: ").strip()
+
+        if opt in ["", "1"]:
+            print("\n✔ Guion aprobado sin cambios.")
+            break
+        elif opt == "2":
+            scene_num = input("Número de escena a editar (ej. 1): ").strip()
+            if scene_num.isdigit():
+                idx = int(scene_num) - 1
+                if 0 <= idx < len(data["scenes"]):
+                    target_sc = data["scenes"][idx]
+                    print(f"\n--- Editando Escena {target_sc['scene_number']} ---")
+                    
+                    new_narr = input(f"Nueva locución [ENTER para mantener]: ").strip()
+                    if new_narr:
+                        target_sc["narration_text"] = new_narr
+                        
+                    new_vis = input(f"Nuevo prompt visual [ENTER para mantener]: ").strip()
+                    if new_vis:
+                        target_sc["visual_prompt"] = new_vis
+                        
+                    print(f"✔ Escena {target_sc['scene_number']} actualizada.")
+                else:
+                    print("⚠️ Número de escena fuera de rango.")
+            else:
+                print("⚠️ Número inválido.")
+        elif opt == "3":
+            new_title = input("Nuevo título para el video: ").strip()
+            if new_title:
+                data["title"] = new_title
+                print(f"✔ Título actualizado a: '{new_title}'")
+
+    return ScriptManifest.model_validate(data)
+
+
+# --- FUNCIÓN PRINCIPAL ---
+
+def generate_script(
+    topic: Optional[str] = None,
+    target_duration: int = 15,
+    model: str = "google/gemini-3.7-flash"
+) -> Dict[str, Any]:
+    """Flujo completo de generación, aprobación y creación del proyecto aislado."""
+    print("\n" + "=" * 85)
+    print(" 🎬 GENERADOR DE GUIONES PARA FACELESS ENGINE")
+    print("=" * 85)
+
+    idea_data = load_selected_idea()
+
+    if not idea_data:
+        print("⚠️ No se encontró 'output/selected_idea.json'. Generando a partir del tema directo.")
+        user_topic = topic or input("👉 Ingrese el tema del video: ").strip() or "Tema General"
+        idea_data = {
+            "topic": user_topic,
+            "selected_idea": {
+                "titulo": user_topic,
+                "gancho_inicial": f"¿Sabías esto sobre {user_topic}?",
+                "resumen_premisa": f"Un recorrido por {user_topic}.",
+                "remate_o_giro": "Increíble pero cierto."
+            }
+        }
+
+    reverse_analysis = load_reverse_analysis()
+
+    manifest = generate_script_from_openrouter(
+        idea_data=idea_data,
+        reverse_analysis=reverse_analysis,
+        target_duration=target_duration,
+        model=model
     )
 
-    manifest_data = script_manifest.model_dump()
+    if not manifest:
+        raise RuntimeError("No se pudo generar el guion con OpenRouter.")
+
+    # Intervención humana
+    final_manifest = display_and_review_script(manifest)
+    manifest_data = final_manifest.model_dump()
+
+    # Crear carpeta del proyecto bajo projects/
+    project_dir = create_project_structure(manifest_data["title"])
+    manifest_path = os.path.join(project_dir, "manifest.json")
 
     with open(manifest_path, "w", encoding="utf-8") as f:
         json.dump(manifest_data, f, indent=2, ensure_ascii=False)
 
-    print(f"   ✔ Guion guardado en: {manifest_path}")
+    print(f"\n📁 Proyecto creado con éxito en: '{project_dir}'")
+    print(f"📄 Guion inicial guardado en: '{manifest_path}'\n")
+
     return manifest_data
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Generador de Guiones Faceless Engine")
+    parser.add_argument("--duration", type=int, default=15, help="Duración objetivo en segundos")
+    parser.add_argument("--model", type=str, default="google/gemini-3.7-flash", help="Modelo de OpenRouter")
+
+    args = parser.parse_args()
+    generate_script(
+        target_duration=args.duration,
+        model=args.model
+    )
