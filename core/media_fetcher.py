@@ -83,7 +83,7 @@ def generate_image_via_openrouter(
     model: str = "google/gemini-3.1-flash-image",
     max_retries: int = 1
 ) -> bool:
-    """Solicita la generación de imagen a OpenRouter con 1 solo intento por defecto y volcado de diagnóstico."""
+    """Solicita la generación de imagen a OpenRouter."""
     api_key = os.getenv("OPENROUTER_API_KEY")
     if not api_key:
         print("   ❌ Error: OPENROUTER_API_KEY no encontrada en .env")
@@ -97,7 +97,6 @@ def generate_image_via_openrouter(
         "X-Title": "Faceless Engine"
     }
 
-    # Payload adaptado para solicitar explícitamente modalidad de imagen
     payload = {
         "model": model,
         "modalities": ["image", "text"],
@@ -116,7 +115,6 @@ def generate_image_via_openrouter(
             if res.status_code == 200:
                 data = res.json()
                 
-                # Guardar respuesta cruda para inspección
                 os.makedirs("output", exist_ok=True)
                 with open("output/debug_openrouter_response.json", "w", encoding="utf-8") as f:
                     json.dump(data, f, indent=2, ensure_ascii=False)
@@ -124,12 +122,12 @@ def generate_image_via_openrouter(
                 choice = data.get("choices", [{}])[0]
                 message = choice.get("message", {})
                 
-                # Inspección 1: message.content (texto, markdown URL o Data URL)
+                # Inspección 1: message.content
                 content = message.get("content", "")
                 if content and _save_image_from_content(str(content), output_path):
                     return True
 
-                # Inspección 2: message.images (lista de objetos con url/b64)
+                # Inspección 2: message.images
                 images = message.get("images", [])
                 if isinstance(images, list) and len(images) > 0:
                     first_img = images[0]
@@ -139,17 +137,11 @@ def generate_image_via_openrouter(
                     if img_src and _save_image_from_content(str(img_src), output_path):
                         return True
 
-                # Inspección 3: Estructuras alternativas en choice
+                # Inspección 3: choice.image_url
                 if "image_url" in choice and _save_image_from_content(str(choice["image_url"]), output_path):
                     return True
 
                 print("\n   ⚠️ No se pudo extraer la imagen del JSON recibido.")
-                print("   🔍 Estructura clave devuelta por OpenRouter:")
-                print("   --------------------------------------------------")
-                print(json.dumps(message, indent=2, ensure_ascii=False)[:600])
-                print("   --------------------------------------------------")
-                print("   📄 JSON completo guardado en: 'output/debug_openrouter_response.json'")
-
             else:
                 print(f"   ⚠️ OpenRouter respondió con status {res.status_code}: {res.text[:200]}")
 
@@ -163,9 +155,12 @@ def process_scene_media(
     project_dir: str,
     model: str = "google/gemini-3.1-flash-image",
     max_retries: int = 1,
-    single_scene: bool = False
+    target_scene: Optional[int] = None
 ):
-    """Procesa las escenas del manifest.json limitando intentos y permitiendo modo de prueba de 1 sola escena."""
+    """
+    Procesa escenas del manifest.json. 
+    Si target_scene está definido (ej: 25), procesa ÚNICAMENTE esa escena.
+    """
     manifest_path = os.path.join(project_dir, "manifest.json")
     if not os.path.exists(manifest_path):
         raise FileNotFoundError(f"No se encontró manifest.json en: {project_dir}")
@@ -176,22 +171,36 @@ def process_scene_media(
     images_dir = os.path.join(project_dir, "images")
     os.makedirs(images_dir, exist_ok=True)
 
+    all_scenes = manifest.get("scenes", [])
+    if not all_scenes:
+        print("⚠️ No hay escenas en manifest.json")
+        return
+
+    # Filtrar si se solicitó una escena en específico
+    if target_scene is not None:
+        scenes_to_process = [s for s in all_scenes if s.get("scene_number") == target_scene]
+        if not scenes_to_process:
+            print(f"❌ La escena número {target_scene} no existe en el manifest. (Total escenas: {len(all_scenes)})")
+            return
+    else:
+        scenes_to_process = all_scenes
+
     print("\n" + "=" * 80)
-    print(f" 🖼️ DIAGNÓSTICO DE IMÁGENES CON OPENROUTER ({model})")
-    print(f" ⚙️ Intentos máximos por escena: {max_retries} | Modo prueba (1 escena): {single_scene}")
+    print(f" 🖼️ GENERANDO IMÁGENES MEDIANTE OPENROUTER ({model})")
+    if target_scene:
+        print(f" 🎯 MODO ESCENA ÚNICA: Procesando únicamente la Escena #{target_scene}")
+    else:
+        print(f" ⚙️ Procesando todas las escenas ({len(scenes_to_process)}) | Retries: {max_retries}")
     print("=" * 80)
 
-    scenes = manifest.get("scenes", [])
-    if single_scene:
-        scenes = scenes[:1]
-
-    for idx, scene in enumerate(scenes, 1):
+    for scene in scenes_to_process:
+        idx = scene.get("scene_number", 1)
         visual_prompt = scene.get("visual_prompt", "minimalist 2D vector stick figure cartoon")
         narration = scene.get("narration_text", "")
         image_filename = f"scene_{idx}.jpg"
         image_path = os.path.join(images_dir, image_filename)
 
-        print(f"\n🖼️ Procesando Escena {idx} de {len(scenes)}...")
+        print(f"\n🖼️ Procesando Escena {idx}...")
         print(f"   Prompt: \"{visual_prompt[:90]}...\"")
 
         success = generate_image_via_openrouter(
@@ -202,26 +211,29 @@ def process_scene_media(
         )
 
         if success:
-            print(f"   ✔ Imagen generada con éxito en: {image_path}")
+            print(f"   ✔ Imagen generada y actualizada en: {image_path}")
         else:
-            print("   ⚠️ Generando imagen de respaldo local (Pillow)...")
+            print("   ⚠️ Falló la generación en línea. Generando respaldo local (Pillow)...")
             create_fallback_image(image_path, idx, narration)
             print(f"   ✔ Respaldo guardado en: {image_path}")
 
         scene["image_path"] = image_path
 
-    if not single_scene:
-        with open(manifest_path, "w", encoding="utf-8") as f:
-            json.dump(manifest, f, indent=2, ensure_ascii=False)
-        print("\n✔ Manifest actualizado.")
+    # Guardar manifest.json actualizado preservando el resto de las escenas intactas
+    with open(manifest_path, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=2, ensure_ascii=False)
+
+    print("\n" + "=" * 80)
+    print(" ✔ Proceso completado y manifest.json actualizado.")
+    print("=" * 80)
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Módulo Visual con Diagnóstico de Consumo")
+    parser = argparse.ArgumentParser(description="Módulo Visual para Faceless Engine")
     parser.add_argument("--project_dir", type=str, default=None, help="Directorio del proyecto")
     parser.add_argument("--model", type=str, default="google/gemini-3.1-flash-image", help="Modelo de OpenRouter")
-    parser.add_argument("--retries", type=int, default=1, help="Reintentos por escena (por defecto 1)")
-    parser.add_argument("--single-scene", action="store_true", help="Procesa ÚNICAMENTE la Escena 1 para pruebas")
+    parser.add_argument("--retries", type=int, default=1, help="Reintentos por escena")
+    parser.add_argument("--scene", type=int, default=None, help="Número específico de escena a regenerar (ej: --scene 25)")
 
     args = parser.parse_args()
     target_project_dir = args.project_dir or get_current_project_dir()
@@ -230,5 +242,5 @@ if __name__ == "__main__":
         project_dir=target_project_dir,
         model=args.model,
         max_retries=args.retries,
-        single_scene=args.single_scene
+        target_scene=args.scene
     )
