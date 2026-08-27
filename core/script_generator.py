@@ -22,7 +22,7 @@ load_dotenv()
 class Scene(BaseModel):
     scene_number: int = Field(description="Número secuencial de la escena (1, 2, 3...)")
     narration_text: str = Field(description="Texto en español que dirá la voz en off para esta escena")
-    visual_prompt: str = Field(description="Prompt visual ultradetallado en INGLÉS para la imagen o video de apoyo")
+    visual_prompt: str = Field(description="Prompt visual ultradetallado en INGLÉS listo para generador de imágenes 2D")
     audio_file: Optional[str] = Field(default=None, description="Ruta al archivo MP3 de la escena")
     audio_duration_seconds: Optional[float] = Field(default=None, description="Duración exacta en segundos del audio")
     image_path: Optional[str] = Field(default=None, description="Ruta a la imagen o video generado para la escena")
@@ -45,7 +45,7 @@ def slugify(text: str, max_words: int = 4) -> str:
 
 
 def create_project_structure(title: str, base_projects_dir: str = "projects") -> str:
-    """Crea la carpeta timestamped del proyecto e interactúa con audio/ y images/."""
+    """Crea la carpeta timestamped del proyecto e interactúa con audio/ e images/."""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     folder_slug = slugify(title)
     project_dir = os.path.join(base_projects_dir, f"{timestamp}_{folder_slug}")
@@ -99,7 +99,7 @@ def generate_script_from_openrouter(
     target_duration: int = 15,
     model: str = "google/gemini-3.7-flash"
 ) -> Optional[ScriptManifest]:
-    """Genera el guion enviando la idea seleccionada a OpenRouter."""
+    """Genera el guion enviando la idea seleccionada a OpenRouter con prompts enfocado en monigotes 2D."""
     api_key = os.getenv("OPENROUTER_API_KEY")
     if not api_key:
         print("❌ Error: OPENROUTER_API_KEY no encontrada en .env")
@@ -113,19 +113,24 @@ def generate_script_from_openrouter(
     style_guidelines = ""
     if reverse_analysis:
         style_guidelines = (
-            f"- Estilo narrativo: {reverse_analysis.get('estilo_visual_narrativo', 'Dramático y directo')}\n"
-            f"- Recurso de retención: {reverse_analysis.get('patron_retencion', 'Cambios visuales constantes')}\n"
+            f"- Estilo narrativo: {reverse_analysis.get('estilo_visual_narrativo', 'Educativo y directo')}\n"
+            f"- Recurso de retención: {reverse_analysis.get('patron_retencion', 'Cambios visuales constantes y elementos icónicos')}\n"
         )
 
+    # SYSTEM PROMPT CON STYLE ANCHOR DEEP EPOCH (2D STICK FIGURE) INTEGRADO
     system_instruction = (
-        "Eres un guionista experto en contenido viral ultracorto para YouTube Shorts, Reels y TikTok (9:16).\n"
-        "Tu objetivo es transformar la idea provista en un guion estructurado de 2 a 3 escenas.\n\n"
-        "REGLAS OBLIGATORIAS:\n"
-        "1. Narración (narration_text): En ESPAÑOL, directo al punto, sin muletillas ni explicaciones innecesarias.\n"
-        "2. La Escena 1 DEBE iniciar directamente con el gancho inicial indicado.\n"
-        "3. La última escena DEBE incluir la conclusión/remate indicado.\n"
-        "4. Prompts Visuales (visual_prompt): SIEMPRE en INGLÉS. Estilo cinematográfico, 8k, photorealistic, 9:16 vertical ratio.\n"
-        "5. NO incluyas saltos de línea internos en los valores de texto del JSON.\n\n"
+        "Eres un director de arte y guionista experto en videos virales educativos estilo 'Deep Epoch' para YouTube Shorts, Reels y TikTok (9:16).\n"
+        "Tu tarea es transformar la idea recibida en un guion estructurado de 2 a 3 escenas.\n\n"
+        "REGLAS STRICTAS DE ESTILO VISUAL (STICK FIGURE 2D):\n"
+        "1. Narración (narration_text): En ESPAÑOL, directo al punto, dinámico, sin muletillas.\n"
+        "2. Prompts Visuales (visual_prompt): SIEMPRE EN INGLÉS.\n"
+        "3. Estilo Visual Obligatorio en CADA visual_prompt:\n"
+        "   - DEBES comenzar la descripción visual con este Style Anchor EXACTO:\n"
+        "     'Minimalist 2D vector stick-figure illustration in Deep Epoch educational style, round white head with black outline, thin black stick limbs, simple flat colors, no 3D rendering, no gradients, no shading, high contrast, 9:16 vertical ratio.'\n"
+        "   - Luego describe los personajes de palitos (ej. 'character with 3 hair strands in a brown pelt tunic'), sus expresiones (minimalist facial expressions: dot eyes, curved mouth), acciones simples, fondo plano (flat ground/sky) y elementos icónicos o globos de diálogo simples si aplican.\n"
+        "4. La Escena 1 DEBE iniciar directamente con el gancho inicial indicado.\n"
+        "5. La última escena DEBE incluir la conclusión o giro final indicado.\n"
+        "6. Formato estricto 9:16 vertical. Evita cualquier término como 'photorealistic', '3D render', 'cinematic lighting', 'shading'.\n\n"
         "Esquema JSON requerido:\n"
         "{\n"
         '  "title": "Título del video",\n'
@@ -134,7 +139,7 @@ def generate_script_from_openrouter(
         '    {\n'
         '      "scene_number": 1,\n'
         '      "narration_text": "Texto exacto de locución en español",\n'
-        '      "visual_prompt": "Detailed English prompt for image generation, cinematic 8k photorealistic"\n'
+        '      "visual_prompt": "Minimalist 2D vector stick-figure illustration in Deep Epoch educational style, round white head with black outline, thin black stick limbs, simple flat colors, no 3D rendering, no gradients, no shading, high contrast, 9:16 vertical ratio. Two stick figure cavemen examining a puddle of dirty water, light blue sky, dry cracked desert ground, speech bubble with question mark icon."\n'
         '    }\n'
         '  ]\n'
         "}"
@@ -149,7 +154,7 @@ Remate/Giro Final: {idea.get('remate_o_giro', '')}
 
 {style_guidelines}
 Duración objetivo: {target_duration} segundos.
-Genera entre 2 y 3 escenas máximo.
+Genera entre 2 y 3 escenas máximo. Asegúrate de estructurar visual_prompt aplicando el Style Anchor de monigotes 2D.
 """
 
     raw_content = ""
