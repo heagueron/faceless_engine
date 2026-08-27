@@ -1,8 +1,9 @@
 import os
 import json
+import asyncio
 import argparse
 from typing import Optional
-from gtts import gTTS
+import edge_tts
 from mutagen.mp3 import MP3
 
 
@@ -34,18 +35,36 @@ def get_current_project_dir() -> str:
     )
 
 
-def generate_scene_audio(text: str, output_path: str, lang: str = "es") -> float:
-    """Convierte texto a voz MP3 usando gTTS y devuelve su duración exacta en segundos."""
-    tts = gTTS(text=text, lang=lang, slow=False)
-    tts.save(output_path)
-    
+async def _async_generate_audio(text: str, output_path: str, voice: str, rate: str = "+0%", pitch: str = "+0Hz"):
+    """Función asíncrona que interactúa con el motor de Microsoft Edge TTS."""
+    communicate = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch)
+    await communicate.save(output_path)
+
+
+def generate_scene_audio(
+    text: str,
+    output_path: str,
+    voice: str = "es-VE-SebastianNeural ",
+    rate: str = "+0%",
+    pitch: str = "+0Hz"
+) -> float:
+    """
+    Convierte texto a voz MP3 usando edge-tts (Voz Neural de Microsoft)
+    y devuelve su duración exacta en segundos.
+    """
+    asyncio.run(_async_generate_audio(text, output_path, voice, rate, pitch))
     audio = MP3(output_path)
     return round(audio.info.length, 2)
 
 
-def generate_voice_over(project_dir: Optional[str] = None, target_scene: Optional[int] = None):
+def generate_voice_over(
+    project_dir: Optional[str] = None,
+    target_scene: Optional[int] = None,
+    voice: str = "es-VE-SebastianNeural ",
+    rate: str = "+0%"
+):
     """
-    Genera el audio TTS para las escenas del manifest.json.
+    Genera el audio TTS para las escenas del manifest.json usando edge-tts.
     Soporta procesamiento individual si se pasa target_scene.
     """
     if not project_dir:
@@ -76,7 +95,8 @@ def generate_voice_over(project_dir: Optional[str] = None, target_scene: Optiona
         scenes_to_process = all_scenes
 
     print("\n" + "=" * 80)
-    print(" 🎙️ GENERANDO AUDIO PARA ESCENAS (gTTS)")
+    print(f" 🎙️ GENERANDO AUDIO NEURONAL (edge-tts)")
+    print(f" 🗣️ Voz: {voice} | Velocidad: {rate}")
     if target_scene:
         print(f" 🎯 MODO ESCENA ÚNICA: Procesando la Escena #{target_scene}")
     print("=" * 80)
@@ -96,7 +116,7 @@ def generate_voice_over(project_dir: Optional[str] = None, target_scene: Optiona
         print(f"   Texto: \"{text}\"")
 
         try:
-            duration = generate_scene_audio(text, audio_path)
+            duration = generate_scene_audio(text, audio_path, voice=voice, rate=rate)
             scene["audio_file"] = audio_path
             scene["audio_duration_seconds"] = duration
             print(f"   ✔ Guardado: {audio_path} ({duration}s)")
@@ -113,7 +133,7 @@ def generate_voice_over(project_dir: Optional[str] = None, target_scene: Optiona
         json.dump(manifest, f, indent=2, ensure_ascii=False)
 
     print("\n" + "=" * 80)
-    print(" ✔ Proceso de audio completado.")
+    print(" ✔ Proceso de audio completado con edge-tts.")
     print(f" ⏱️ Duración total acumulada: {manifest['total_audio_duration_seconds']}s")
     print(f" 📄 Manifiesto actualizado: {manifest_path}")
     print("=" * 80)
@@ -124,16 +144,20 @@ process_script_audio = generate_voice_over
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Módulo de Locución y Sincronización de Audio (TTS)")
+    parser = argparse.ArgumentParser(description="Módulo de Locución Neural (edge-tts)")
     parser.add_argument("--project_dir", type=str, default=None, help="Directorio del proyecto")
     parser.add_argument("--scene", type=int, default=None, help="Número de escena específica a regenerar")
+    parser.add_argument("--voice", type=str, default="es-VE-SebastianNeural", help="Voz neural (ej: es-MX-JorgeNeural, es-ES-AlvaroNeural)")
+    parser.add_argument("--rate", type=str, default="+0%", help="Ajuste de velocidad (ej: +10%% para narración rápida de Shorts)")
 
     args = parser.parse_args()
 
     try:
         generate_voice_over(
             project_dir=args.project_dir,
-            target_scene=args.scene
+            target_scene=args.scene,
+            voice=args.voice,
+            rate=args.rate
         )
     except Exception as e:
         print(f"\n❌ Error en la generación de audio: {e}")
