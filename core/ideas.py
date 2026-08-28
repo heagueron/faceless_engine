@@ -16,80 +16,83 @@ from pydantic import BaseModel, Field
 load_dotenv()
 
 
-class IdeaItem(BaseModel):
-    id: int
-    titulo: str = Field(description="Título corto y atractivo para la idea.")
-    gancho_inicial: str = Field(description="Gancho de 0-3s para detener el scroll.")
-    resumen_premisa: str = Field(description="Resumen corto de la historia o concepto (2 a 3 oraciones).")
-    remate_o_giro: str = Field(description="Cierre, conclusión o giro de la historia.")
+# --- ESQUEMAS DE DATOS (PYDANTIC) ---
+
+class VideoIdea(BaseModel):
+    id: int = Field(description="Número de la opción (1, 2, 3...)")
+    titulo: str = Field(description="Título sugerido, atractivo y corto para el Short")
+    gancho_inicial: str = Field(description="Gancho de los primeros 0-3 segundos para capturar la atención")
+    resumen_premisa: str = Field(description="Desarrollo o historia principal sintetizada en 2 oraciones")
+    remate_o_giro: str = Field(description="Conclusión impactante, llamada a la acción o giro final")
 
 
 class IdeasResponse(BaseModel):
-    ideas: List[IdeaItem]
+    topic: str = Field(description="Tema general de la consulta")
+    ideas: List[VideoIdea] = Field(description="Lista de 3 propuestas de ángulos virales")
 
+
+# --- CARGA DE ANALISIS PREVIO ---
 
 def load_reverse_analysis() -> Optional[Dict[str, Any]]:
-    """Carga el análisis de ingeniería inversa previo si existe en la carpeta output."""
+    """Carga el análisis de ingeniería inversa si existe en output/."""
     analysis_path = os.path.join("output", "reverse_prompting_analysis.json")
     if os.path.exists(analysis_path):
         try:
             with open(analysis_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                print(f"💡 Referencia cargada: '{data.get('title', 'Video previo')}'")
                 return data.get("analysis")
         except Exception as e:
-            print(f"⚠️ No se pudo leer el análisis previo: {e}")
+            print(f"⚠️ No se pudo leer el análisis de ingeniería inversa: {e}")
     return None
 
 
-def generate_ideas(
+# --- GENERADOR DE IDEAS VIA OPENROUTER ---
+
+def generate_ideas_from_openrouter(
     topic: str,
     reverse_analysis: Optional[Dict[str, Any]] = None,
     model: str = "google/gemini-3.7-flash"
-) -> List[Dict[str, Any]]:
-    """
-    Envía el tema y la estructura de referencia a Gemini vía OpenRouter para generar 5 ideas.
-    """
+) -> Optional[IdeasResponse]:
+    """Genera 3 propuestas de ángulos de video mediante OpenRouter."""
     api_key = os.getenv("OPENROUTER_API_KEY")
     if not api_key:
         print("❌ Error: OPENROUTER_API_KEY no encontrada en .env")
-        return []
+        return None
 
-    print(f"\n🧠 Generando 5 ideas conceptuales para: '{topic}' usando {model}...")
+    print(f"\n🧠 Ideando ángulos virales para '{topic}' usando {model}...")
 
-    context_str = ""
+    style_guidelines = ""
     if reverse_analysis:
-        context_str = (
-            f"- Usar patrón de gancho similar a: {reverse_analysis.get('gancho_inicial', '')}\n"
-            f"- Estructura narrativa sugerida: {reverse_analysis.get('estructura_narrativa', '')}\n"
-            f"- Recurso de retención a aplicar: {reverse_analysis.get('patron_retencion', '')}\n"
+        style_guidelines = (
+            f"- Estilo detectado: {reverse_analysis.get('estilo_visual_narrativo', 'Educativo dinámico')}\n"
+            f"- Retención basada en: {reverse_analysis.get('patron_retencion', 'Ganchos fuertes y alto ritmo')}\n"
         )
 
     system_instruction = (
-        "Eres un creador senior de contenido viral para YouTube Shorts (9:16).\n"
-        "Tu objetivo es proponer EXACTAMENTE 5 ideas únicas, creativas y atrapantes basadas en el tema ingresado.\n\n"
-        "REGLAS ESTRUCTURALES:\n"
-        "1. Responde ÚNICAMENTE con un JSON válido que contenga una lista 'ideas' de 5 elementos.\n"
-        "2. Cada idea debe tener: id (1 al 5), titulo, gancho_inicial, resumen_premisa, remate_o_giro.\n"
-        "3. El resumen_premisa debe ser conciso (máximo 25 palabras).\n"
-        "4. NO utilices saltos de línea dentro de los valores de texto del JSON.\n\n"
-        "Esquema JSON requerido:\n"
+        "Eres un estratega de contenido experto en YouTube Shorts, Reels y TikTok.\n"
+        "Tu objetivo es proponer 3 ángulos virales distintos y altamente atractivos basados en el tema proporcionado.\n"
+        "Cada opción debe incluir un gancho inicial irresistible (primeros 3 segundos), un resumen rápido de la premisa y un remate final memorable.\n\n"
+        "Responde EXCLUSIVAMENTE en JSON que cumpla el esquema requerido:\n"
         "{\n"
+        '  "topic": "Tema general",\n'
         '  "ideas": [\n'
         '    {\n'
         '      "id": 1,\n'
-        '      "titulo": "Título de la idea",\n'
-        '      "gancho_inicial": "Frase impactante (0-3s)",\n'
-        '      "resumen_premisa": "Resumen corto en 2 oraciones.",\n'
-        '      "remate_o_giro": "Cierre imprevisto o conclusión."\n'
+        '      "titulo": "Título corto y magnético",\n'
+        '      "gancho_inicial": "Pregunta o afirmación chocante para los primeros 3 segundos",\n'
+        '      "resumen_premisa": "Desarrollo rápido del tema en 2 frases",\n'
+        '      "remate_o_giro": "Conclusión impactante o reflexión final"\n'
         '    }\n'
         '  ]\n'
         "}"
     )
 
-    user_prompt = f"Tema deseado: '{topic}'\n"
-    if context_str:
-        user_prompt += f"\nPautas de éxito (ingeniería inversa previa):\n{context_str}"
+    user_prompt = f"""
+Tema principal: {topic}
+{style_guidelines}
+
+Genera 3 propuestas de ideas con enfoques dramáticos, educativos o curiosos para capturar el máximo de retención.
+"""
 
     raw_content = ""
     try:
@@ -104,12 +107,9 @@ def generate_ideas(
                     {"role": "system", "content": system_instruction},
                     {"role": "user", "content": user_prompt}
                 ],
-                temperature=0.7,
-                max_tokens=2500,  # 👈 Aumentado para tolerar razonamiento + JSON completo
-                response_format={"type": "json_object"},
-                extra_body={
-                    "reasoning": {"effort": "low"}  # 👈 Minimiza gasto excesivo de tokens en 'thinking'
-                }
+                temperature=0.8,
+                max_tokens=2000,
+                response_format={"type": "json_object"}
             )
             raw_content = response.choices[0].message.content
         else:
@@ -125,10 +125,9 @@ def generate_ideas(
                     {"role": "system", "content": system_instruction},
                     {"role": "user", "content": user_prompt}
                 ],
-                "temperature": 0.7,
-                "max_tokens": 2500,  # 👈 Aumentado
-                "response_format": {"type": "json_object"},
-                "reasoning": {"effort": "low"}  # 👈 Reducción de razonamiento
+                "temperature": 0.8,
+                "max_tokens": 2000,
+                "response_format": {"type": "json_object"}
             }
             res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload, timeout=30)
             res.raise_for_status()
@@ -141,106 +140,116 @@ def generate_ideas(
             clean_json_str = re.sub(r"\n?```$", "", clean_json_str).strip()
 
         ideas_dict = json.loads(clean_json_str)
-        validated = IdeasResponse.model_validate(ideas_dict)
-        return [idea.model_dump() for idea in validated.ideas]
+        return IdeasResponse.model_validate(ideas_dict)
 
     except Exception as e:
         print(f"❌ Error al generar ideas vía OpenRouter: {e}")
         if raw_content:
-            print(f"📄 Respuesta cruda (truncada):\n{raw_content}")
-        return []
+            print(f"📄 Respuesta cruda:\n{raw_content}")
+        return None
 
 
-def display_ideas(ideas: List[Dict[str, Any]]):
-    """Muestra las 5 ideas formateadas en consola."""
+# --- SELECCIÓN INTERACTIVA ---
+
+def select_idea_interactive(ideas_res: IdeasResponse) -> VideoIdea:
+    """Muestra las opciones en consola y permite al usuario seleccionar una."""
+    ideas = ideas_res.ideas
+
     print("\n" + "=" * 85)
-    print(" 💡 5 IDEAS GENERADAS PARA TU VIDEO")
-    print("=" * 85)
-    for idea in ideas:
-        print(f"[{idea['id']}] 📌 {idea['titulo']}")
-        print(f"    🎣 Gancho (0-3s): {idea['gancho_inicial']}")
-        print(f"    📖 Premisa:     {idea['resumen_premisa']}")
-        print(f"    🏁 Remate:      {idea['remate_o_giro']}\n")
+    print(f"💡 PROPUESTAS DE ÁNGULOS VIRALES PARA: '{ideas_res.topic}'")
     print("=" * 85)
 
+    for idx, idea in enumerate(ideas, 1):
+        print(f"\n📌 Opción #{idx}: {idea.titulo}")
+        print(f"   🎣 Gancho (0-3s): {idea.gancho_inicial}")
+        print(f"   📖 Premisa:     {idea.resumen_premisa}")
+        print(f"   💥 Remate:      {idea.remate_o_giro}")
 
-def select_or_custom_idea(topic: str, ideas: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Permite al usuario elegir una de las 5 ideas o redactar/ajustar una propia."""
-    if ideas:
-        display_ideas(ideas)
-        print("\n🛑 INTERVENCIÓN HUMANA:")
-        print("👉 Selecciona el número [1-5] de la idea preferida.")
-        print("👉 O escribe una idea/mejora personalizada directamente.")
-    else:
-        print("\n⚠️ No se pudieron generar las ideas automáticas.")
-        print("🛑 INTERVENCIÓN HUMANA:")
-        print("👉 Escribe directamente la idea o premisa que deseas usar para el video:")
-
-    choice = input("\nSu elección: ").strip()
-
-    selected_data = {}
-
-    if ideas and choice.isdigit() and 1 <= int(choice) <= len(ideas):
-        idx = int(choice) - 1
-        selected_data = ideas[idx]
-        print(f"\n✔ Idea seleccionada: [{selected_data['id']}] {selected_data['titulo']}")
-    elif len(choice) > 0:
-        print(f"\n✔ Idea personalizada ingresada: '{choice}'")
-        selected_data = {
-            "id": 0,
-            "titulo": f"Idea: {topic}",
-            "gancho_inicial": "Definido para el script",
-            "resumen_premisa": choice,
-            "remate_o_giro": "Definido para el script"
-        }
-    else:
-        fallback_idea = ideas[0] if ideas else {
-            "id": 0,
-            "titulo": topic,
-            "gancho_inicial": f"¿Sabías esto sobre {topic}?",
-            "resumen_premisa": f"Un recorrido narrativo por {topic}.",
-            "remate_o_giro": "Un dato impactante al final."
-        }
-        selected_data = fallback_idea
-        print(f"\n✔ Opción seleccionada por defecto: {selected_data['titulo']}")
-
-    os.makedirs("output", exist_ok=True)
-    output_path = os.path.join("output", "selected_idea.json")
-    
-    final_payload = {
-        "topic": topic,
-        "selected_idea": selected_data
-    }
-    
-    with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(final_payload, f, ensure_ascii=False, indent=2)
-
-    print(f"📁 Idea guardada con éxito en: '{output_path}'\n")
-    return final_payload
-
-def run_ideas_workflow(custom_topic: Optional[str] = None) -> Dict[str, Any]:
-    """Workflow interactivo principal para ideas.py."""
     print("\n" + "=" * 85)
-    print(" 🎯 GENERADOR DE IDEAS NARRATIVAS PARA SHORTS")
-    print("=" * 85)
-
-    topic = custom_topic
-    if not topic:
-        topic = input("👉 Ingrese el TEMA para las 5 ideas (ej. 'Cultura griega antigua'): ").strip()
     
+    while True:
+        choice = input(f"👉 Selecciona una opción [1-{len(ideas)}] (ENTER para opción 1): ").strip()
+        if choice == "":
+            selected = ideas[0]
+            break
+        elif choice.isdigit():
+            val = int(choice)
+            if 1 <= val <= len(ideas):
+                selected = ideas[val - 1]
+                break
+        print("⚠️ Selección inválida. Intenta de nuevo.")
+
+    print(f"\n✔ Ángulo seleccionado: '{selected.titulo}'")
+    return selected
+
+
+# --- FUNCIÓN PRINCIPAL DE INTEGRACIÓN ---
+
+def generate_ideas(
+    topic: Optional[str] = None,
+    project_dir: Optional[str] = None,
+    model: str = "google/gemini-3.7-flash"
+) -> Dict[str, Any]:
+    """Genera ideas, solicita la elección del usuario y guarda la selección."""
     if not topic:
-        topic = "Aventuras en la montaña"
+        # Intentar leer el tema desde current_project.json si existe
+        current_path = os.path.join("output", "current_project.json")
+        if os.path.exists(current_path):
+            try:
+                with open(current_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    topic = data.get("topic")
+            except Exception:
+                pass
+
+    if not topic:
+        topic = input("👉 Ingrese el tema para el video: ").strip() or "Tema General"
 
     reverse_analysis = load_reverse_analysis()
-    ideas = generate_ideas(topic=topic, reverse_analysis=reverse_analysis)
-    
-    return select_or_custom_idea(topic=topic, ideas=ideas)
+
+    ideas_res = generate_ideas_from_openrouter(
+        topic=topic,
+        reverse_analysis=reverse_analysis,
+        model=model
+    )
+
+    if not ideas_res or not ideas_res.ideas:
+        print("⚠️ No se pudieron generar opciones con la IA. Creando idea por defecto.")
+        selected_idea = VideoIdea(
+            id=1,
+            titulo=topic,
+            gancho_inicial=f"¿Conocías esto sobre {topic}?",
+            resumen_premisa=f"Una mirada rápida al tema de {topic}.",
+            remate_o_giro="Sorprendente pero cierto."
+        )
+    else:
+        selected_idea = select_idea_interactive(ideas_res)
+
+    output_payload = {
+        "topic": topic,
+        "selected_idea": selected_idea.model_dump()
+    }
+
+    # Guardar en output/selected_idea.json
+    os.makedirs("output", exist_ok=True)
+    selected_path = os.path.join("output", "selected_idea.json")
+    with open(selected_path, "w", encoding="utf-8") as f:
+        json.dump(output_payload, f, indent=2, ensure_ascii=False)
+
+    # Si se pasó un directorio de proyecto, guardar también una copia allí
+    if project_dir and os.path.exists(project_dir):
+        project_idea_path = os.path.join(project_dir, "selected_idea.json")
+        with open(project_idea_path, "w", encoding="utf-8") as f:
+            json.dump(output_payload, f, indent=2, ensure_ascii=False)
+
+    print(f"📄 Idea guardada en: '{selected_path}'\n")
+    return output_payload
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Generador de Ideas de Video para Faceless Engine")
-    parser.add_argument("--topic", type=str, help="Tema para generar las 5 ideas")
+    parser = argparse.ArgumentParser(description="Generador de Ideas y Ángulos Virales")
+    parser.add_argument("--topic", type=str, default=None, help="Tema del video")
     parser.add_argument("--model", type=str, default="google/gemini-3.7-flash", help="Modelo de OpenRouter")
 
     args = parser.parse_args()
-    run_ideas_workflow(custom_topic=args.topic)
+    generate_ideas(topic=args.topic, model=args.model)

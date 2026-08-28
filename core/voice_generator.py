@@ -37,14 +37,15 @@ def get_current_project_dir() -> str:
 
 async def _async_generate_audio(text: str, output_path: str, voice: str, rate: str = "+0%", pitch: str = "+0Hz"):
     """Función asíncrona que interactúa con el motor de Microsoft Edge TTS."""
-    communicate = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch)
+    clean_voice = voice.strip()
+    communicate = edge_tts.Communicate(text, clean_voice, rate=rate, pitch=pitch)
     await communicate.save(output_path)
 
 
 def generate_scene_audio(
     text: str,
     output_path: str,
-    voice: str = "es-VE-SebastianNeural ",
+    voice: str = "es-VE-SebastianNeural",
     rate: str = "+0%",
     pitch: str = "+0Hz"
 ) -> float:
@@ -60,7 +61,7 @@ def generate_scene_audio(
 def generate_voice_over(
     project_dir: Optional[str] = None,
     target_scene: Optional[int] = None,
-    voice: str = "es-VE-SebastianNeural ",
+    voice: str = "es-VE-SebastianNeural",
     rate: str = "+0%"
 ):
     """
@@ -95,8 +96,8 @@ def generate_voice_over(
         scenes_to_process = all_scenes
 
     print("\n" + "=" * 80)
-    print(f" 🎙️ GENERANDO AUDIO NEURONAL (edge-tts)")
-    print(f" 🗣️ Voz: {voice} | Velocidad: {rate}")
+    print(" 🎙️ GENERANDO AUDIO NEURONAL (edge-tts)")
+    print(f" 🗣️ Voz: {voice.strip()} | Velocidad: {rate}")
     if target_scene:
         print(f" 🎯 MODO ESCENA ÚNICA: Procesando la Escena #{target_scene}")
     print("=" * 80)
@@ -116,7 +117,7 @@ def generate_voice_over(
         print(f"   Texto: \"{text}\"")
 
         try:
-            duration = generate_scene_audio(text, audio_path, voice=voice, rate=rate)
+            duration = generate_scene_audio(text, audio_path, voice=voice.strip(), rate=rate)
             scene["audio_file"] = audio_path
             scene["audio_duration_seconds"] = duration
             print(f"   ✔ Guardado: {audio_path} ({duration}s)")
@@ -147,8 +148,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Módulo de Locución Neural (edge-tts)")
     parser.add_argument("--project_dir", type=str, default=None, help="Directorio del proyecto")
     parser.add_argument("--scene", type=int, default=None, help="Número de escena específica a regenerar")
-    parser.add_argument("--voice", type=str, default="es-VE-SebastianNeural", help="Voz neural (ej: es-MX-JorgeNeural, es-ES-AlvaroNeural)")
-    parser.add_argument("--rate", type=str, default="+0%", help="Ajuste de velocidad (ej: +10%% para narración rápida de Shorts)")
+    parser.add_argument("--voice", type=str, default="es-VE-SebastianNeural", help="Voz neural")
+    parser.add_argument("--rate", type=str, default="+0%", help="Ajuste de velocidad")
 
     args = parser.parse_args()
 

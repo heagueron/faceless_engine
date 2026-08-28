@@ -121,7 +121,7 @@ def generate_script_from_openrouter(
     system_instruction = (
         "Eres un director de arte y guionista experto en videos virales educativos estilo 'Deep Epoch' para YouTube Shorts, Reels y TikTok (9:16).\n"
         "Tu tarea es transformar la idea recibida en un guion estructurado de 2 a 3 escenas.\n\n"
-        "REGLAS STRICTAS DE ESTILO VISUAL (STICK FIGURE 2D):\n"
+        "REGLAS ESTRICTAS DE ESTILO VISUAL (STICK FIGURE 2D):\n"
         "1. Narración (narration_text): En ESPAÑOL, directo al punto, dinámico, sin muletillas.\n"
         "2. Prompts Visuales (visual_prompt): SIEMPRE EN INGLÉS.\n"
         "3. Estilo Visual Obligatorio en CADA visual_prompt:\n"
@@ -271,14 +271,16 @@ def display_and_review_script(manifest: ScriptManifest) -> ScriptManifest:
     return ScriptManifest.model_validate(data)
 
 
-# --- FUNCIÓN PRINCIPAL ---
+# --- FUNCIÓN PRINCIPAL INTEGRADA ---
 
 def generate_script(
     topic: Optional[str] = None,
+    video_url: Optional[str] = None,
     target_duration: int = 15,
-    model: str = "google/gemini-3.7-flash"
+    model: str = "google/gemini-3.7-flash",
+    project_dir: Optional[str] = None
 ) -> Dict[str, Any]:
-    """Flujo completo de generación, aprobación y creación del proyecto aislado."""
+    """Flujo completo de generación, aprobación y almacenamiento del guion."""
     print("\n" + "=" * 85)
     print(" 🎬 GENERADOR DE GUIONES PARA FACELESS ENGINE")
     print("=" * 85)
@@ -314,15 +316,27 @@ def generate_script(
     final_manifest = display_and_review_script(manifest)
     manifest_data = final_manifest.model_dump()
 
-    # Crear carpeta del proyecto bajo projects/
-    project_dir = create_project_structure(manifest_data["title"])
+    # Determinar el directorio de destino del proyecto
+    if not project_dir:
+        project_dir = create_project_structure(manifest_data["title"])
+    else:
+        # Asegurar subcarpetas audio e images en la ruta recibida de main.py
+        os.makedirs(os.path.join(project_dir, "audio"), exist_ok=True)
+        os.makedirs(os.path.join(project_dir, "images"), exist_ok=True)
+
     manifest_path = os.path.join(project_dir, "manifest.json")
 
     with open(manifest_path, "w", encoding="utf-8") as f:
         json.dump(manifest_data, f, indent=2, ensure_ascii=False)
 
-    print(f"\n📁 Proyecto creado con éxito en: '{project_dir}'")
-    print(f"📄 Guion inicial guardado en: '{manifest_path}'\n")
+    # Actualizar estado global del proyecto activo
+    os.makedirs("output", exist_ok=True)
+    current_proj_path = os.path.join("output", "current_project.json")
+    with open(current_proj_path, "w", encoding="utf-8") as f:
+        json.dump({"project_dir": project_dir, "title": manifest_data["title"]}, f, indent=2, ensure_ascii=False)
+
+    print(f"\n📁 Proyecto actualizado en: '{project_dir}'")
+    print(f"📄 Guion y manifiesto guardados en: '{manifest_path}'\n")
 
     return manifest_data
 
