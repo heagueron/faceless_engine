@@ -1,60 +1,27 @@
-PROYECTO: faceless_engine
+# Faceless Engine - Guía del Proyecto
 
-Propósito
-Motor en Python para la creación automatizada de videos cortos en formato vertical (9:16) destinados a YouTube Shorts, TikTok y Reels. Cubre todo el ciclo: desde el análisis de tendencias en YouTube hasta la generación de guion por IA, síntesis de voz, obtención de imágenes y renderizado final en .mp4.
+## Objetivo
+Motor de automatización integral para la producción de videos cortos sin rostro (Shorts, Reels, TikTok) educativos y de entretenimiento, utilizando IA para análisis de tendencias, ideación viral, guionado, locución neural, generación visual y renderizado animado.
 
-Flujo de Trabajo (Pipeline Principal)
+## Arquitectura y Módulos
+- `main.py`: Orquestador principal del pipeline automatizado de 5 pasos.
+- `core/trend_analyzer.py`: Investigación de tendencias en YouTube y análisis de ingeniería inversa (Reverse Prompting) con Gemini vía OpenRouter.
+- `core/ideas.py`: Generación de 3 ángulos virales (gancho, premisa, remate) con selección interactiva en consola.
+- `core/script_generator.py`: Generación de guiones estructurados en JSON (`manifest.json`) enfocados en animaciones 2D minimalistas.
+- `core/voice_generator.py`: Síntesis de voz neural (TTS) en formato MP3 por escena utilizando Microsoft Edge TTS (`edge-tts`).
+- `core/media_fetcher.py`: Generación de ilustraciones vectoriales estilo 2D stick figure a través de OpenRouter (`google/gemini-3.1-flash-image`).
+- `core/video_composer.py`: Ensamblado y renderizado final en formato MP3/MP4 (9:16 vertical) con efectos de movimiento Ken Burns mediante MoviePy.
 
-PASO 0: core/trend_analyzer.py -> Consulta la API de YouTube para identificar temas virales dentro de un nicho.
+## Flujo del Pipeline (5 Pasos)
+1. **Tendencias e Ingeniería Inversa (`trend_analyzer.py`):** Selección de tema y extracción de patrones de retención de YouTube.
+2. **Ángulos Virales (`ideas.py`):** Elección interactiva entre 3 propuestas creativas antes de redactar el guion.
+3. **Guion Estructurado (`script_generator.py`):** Creación del manifiesto del proyecto con descripciones visuales e instrucciones de locución.
+4. **Locución Neural (`voice_generator.py`):** Generación de audios por escena y cálculo de tiempos precisos.
+5. **Recursos Visuales (`media_fetcher.py`):** Creación de imágenes vectoriales adaptadas a cada escena.
+6. **Composición y Render (`video_composer.py`):** Edición final con animación Ken Burns y sincronización audio-imagen.
 
-
-PASO 1: core/script_generator.py -> Solicita a la API de Google Gemini un guion estructurado en JSON.
-
-
-PASO 2: core/voice_generator.py -> Genera audios .mp3 con gTTS y mide duraciones exactas con mutagen.
-
-
-PASO 3: core/media_fetcher.py -> Descarga imágenes verticales (9:16) basadas en prompts de cada escena.
-
-
-PASO 4: core/video_composer.py -> Sincroniza audio, imagen y duraciones con MoviePy para exportar el archivo .mp4.
-
-
-Descripción de Archivos y Funcionalidades
-
-main.py
-Punto de entrada ejecutable CLI (python main.py). Coordina la ejecución secuencial de los 5 módulos del pipeline, gestiona la captura de entradas del usuario, controla el flujo y maneja errores globales.
-
-
-core/trend_analyzer.py
-Modulo de búsqueda de contenido en YouTube Data API. Incluye fetch_niche_trends para consultar videos recientes en un nicho ordenados por relevancia, y display_trends_summary para imprimir en consola los títulos, canales y métricas de vistas encontradas.
-
-
-core/script_generator.py
-Módulo de generación de guiones mediante la API de Google Gemini. Utiliza modelos Pydantic (Scene, ScriptManifest) para garantizar una estructura JSON estricta. Permite al usuario seleccionar la tendencia deseada (get_user_topic_selection) y genera 3 a 4 escenas con locución en español (narration_text) y descripción visual en inglés (visual_prompt). Produce el archivo script_manifest.json.
-
-
-core/voice_generator.py
-Módulo de síntesis de voz (TTS). Convierte el texto de locución de cada escena a audio con gTTS (generate_scene_audio) y calcula la duración exacta del audio usando mutagen.mp3. Guarda los audios en output/audio/scene_X.mp3 y actualiza las duraciones en script_manifest_with_audio.json.
-
-
-core/media_fetcher.py
-Módulo para la recolección de recursos visuales. Extrae palabras clave de los visual_prompt de cada escena (extract_keywords) y descarga imágenes en formato vertical (1080x1920) acordes al contexto (download_image_from_source). Almacena los archivos en output/images/scene_X.jpg y genera script_manifest_complete.json.
-
-
-core/video_composer.py
-Módulo de edición y renderizado. Toma el manifiesto completo y utiliza MoviePy (assemble_final_video) para acoplar la imagen estática (ImageClip) con su respectivo audio (AudioFileClip) ajustando la duración exacta por escena. Concatena el conjunto de clips y exporta el video final vertical a 30fps (output/renders/final_short.mp4).
-
-
-Ciclo de Vida del Manifiesto JSON (script_manifest.json)
-
-Fase 1 (Guion): Contiene título, tema, duración objetivo y la lista de escenas con narration_text y visual_prompt.
-
-
-Fase 2 (Audio): Incorpora por escena la ruta del archivo audio_file y su duración en segundos audio_duration_seconds.
-
-
-Fase 3 (Imágenes): Asigna a cada escena la ruta local de la imagen descargada image_file.
-
-
-Fase 4 (Render): Es consumido como referencia final por MoviePy para construir el montaje del archivo .mp4.
+## Reglas de Código y Convenciones
+- Nombres de carpetas y archivos en formato ASCII estricto (slugify sin acentos ni caracteres especiales).
+- Control centralizado del proyecto activo mediante `output/current_project.json`.
+- Validación de esquemas de datos con Pydantic.
+- Sanitización estricta de parámetros en llamados a APIs externas y manejo de reintentos con `try/except`.
