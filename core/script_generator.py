@@ -29,7 +29,9 @@ class Scene(BaseModel):
 
 
 class ScriptManifest(BaseModel):
-    title: str = Field(description="Título sugerido y atractivo para el video o Short")
+    title: str = Field(description="Título sugerido y atractivo para el video")
+    video_type: str = Field(default="short", description="Tipo de video: 'short' o 'long'")
+    aspect_ratio: str = Field(default="9:16", description="Relación de aspecto: '9:16' o '16:9'")
     target_duration_seconds: int = Field(description="Duración estimada del video completo en segundos")
     scenes: List[Scene] = Field(description="Lista ordenada de las escenas que componen el guion")
     total_audio_duration_seconds: Optional[float] = Field(default=None, description="Duración acumulada de los audios")
@@ -96,10 +98,12 @@ def load_reverse_analysis() -> Optional[Dict[str, Any]]:
 def generate_script_from_openrouter(
     idea_data: Dict[str, Any],
     reverse_analysis: Optional[Dict[str, Any]] = None,
-    target_duration: int = 15,
+    target_duration: int = 60,
+    video_type: str = "long",
+    aspect_ratio: str = "16:9",
     model: str = "google/gemini-3.7-flash"
 ) -> Optional[ScriptManifest]:
-    """Genera el guion enviando la idea seleccionada a OpenRouter con prompts enfocado en monigotes 2D."""
+    """Genera el guion enviando la idea seleccionada a OpenRouter calculando dinámicamente el número de escenas."""
     api_key = os.getenv("OPENROUTER_API_KEY")
     if not api_key:
         print("❌ Error: OPENROUTER_API_KEY no encontrada en .env")
@@ -108,7 +112,35 @@ def generate_script_from_openrouter(
     topic = idea_data.get("topic", "")
     idea = idea_data.get("selected_idea", {})
 
-    print(f"\n🧠 Generando guion de {target_duration}s usando {model}...")
+    # Cálculo dinámico de cantidad de escenas (promedio ~7s por escena)
+    target_scenes = max(3, round(target_duration / 7.0))
+
+    print(f"\n🧠 Generando guion de {target_duration}s ({target_scenes} escenas estimadas, formato {aspect_ratio}) usando {model}...")
+
+    # Selección de Style Anchor según el aspect ratio
+    if aspect_ratio == "16:9":
+        style_anchor = (
+            "Minimalist 2D vector stick-figure illustration in Deep Epoch educational style, "
+            "round white head with black outline, thin black stick limbs, simple flat colors, "
+            "no 3D rendering, no gradients, no shading, high contrast, 16:9 horizontal widescreen ratio, "
+            "panoramic composition, flat ground line extending horizontally."
+        )
+    else:
+        style_anchor = (
+            "Minimalist 2D vector stick-figure illustration in Deep Epoch educational style, "
+            "round white head with black outline, thin black stick limbs, simple flat colors, "
+            "no 3D rendering, no gradients, no shading, high contrast, 9:16 vertical ratio."
+        )
+
+    narrative_structure_instructions = ""
+    if video_type == "long":
+        narrative_structure_instructions = (
+            f"ESTRUCURA NARRATIVA PARA FORMATO LARGO ({target_scenes} escenas exactas):\n"
+            "- Escena 1: Gancho inicial directo e impactante.\n"
+            "- Escena 2: Introducción al problema o tema central.\n"
+            f"- Escenas 3 a {target_scenes - 1}: Desarrollo pedagógico paso a paso, dividido en conceptos clave o ejemplos visuales.\n"
+            f"- Escena {target_scenes}: Conclusión, reflexión final o remate definitivo.\n\n"
+        )
 
     style_guidelines = ""
     if reverse_analysis:
@@ -118,28 +150,29 @@ def generate_script_from_openrouter(
         )
 
     system_instruction = (
-        "Eres un director de arte y guionista experto en videos virales educativos estilo 'Deep Epoch' para YouTube Shorts, Reels y TikTok (9:16).\n"
-        "Tu tarea es transformar la idea recibida en un guion estructurado de 2 a 3 escenas.\n\n"
+        f"Eres un director de arte y guionista experto en videos educativos virales en formato monigotes 2D ('Deep Epoch style').\n"
+        f"Tu tarea es transformar la idea recibida en un guion estructurado de EXACTAMENTE {target_scenes} escenas.\n\n"
+        f"{narrative_structure_instructions}"
         "REGLAS ESTRICTAS DE ESTILO VISUAL (STICK FIGURE 2D):\n"
         "1. Narración (narration_text): En ESPAÑOL, directo al punto, dinámico, sin muletillas.\n"
         "2. Prompts Visuales (visual_prompt): Se escriben en INGLÉS para la API de imagen.\n"
-        "3. IDIOMA DEL TEXTO DENTRO DE LA IMAGEN: Si el visual_prompt requiere texto impreso, diagramas, flechas con etiquetas, carteles o letreros en la imagen, ESE TEXTO ESPECÍFICO DEBE ESTAR EN ESPAÑOL (ej. text label in Spanish saying 'Nieve 130 km/h' o sign in Spanish with 'Peligro').\n"
+        "3. IDIOMA DEL TEXTO DENTRO DE LA IMAGEN: Si el visual_prompt requiere texto impreso, diagramas, flechas con etiquetas, carteles o letreros en la imagen, ESE TEXTO ESPECÍFICO DEBE ESTAR EN ESPAÑOL (ej. text label in Spanish saying 'Nieve 130 km/h').\n"
         "4. Estilo Visual Obligatorio en CADA visual_prompt:\n"
-        "   - DEBES comenzar la descripción visual con este Style Anchor EXACTO:\n"
-        "     'Minimalist 2D vector stick-figure illustration in Deep Epoch educational style, round white head with black outline, thin black stick limbs, simple flat colors, no 3D rendering, no gradients, no shading, high contrast, 9:16 vertical ratio.'\n"
+        f"   - DEBES comenzar la descripción visual con este Style Anchor EXACTO:\n"
+        f"     '{style_anchor}'\n"
         "   - Luego describe los personajes de palitos, sus expresiones, acciones simples, fondo plano y elementos icónicos.\n"
-        "5. La Escena 1 DEBE iniciar directamente con el gancho inicial indicado.\n"
-        "6. La última escena DEBE incluir la conclusión o giro final indicado.\n"
-        "7. Formato estricto 9:16 vertical. Evita términos como 'photorealistic', '3D render', 'cinematic lighting', 'shading'.\n\n"
+        "5. Evita términos como 'photorealistic', '3D render', 'cinematic lighting', 'shading'.\n\n"
         "Esquema JSON requerido:\n"
         "{\n"
         '  "title": "Título del video",\n'
+        f'  "video_type": "{video_type}",\n'
+        f'  "aspect_ratio": "{aspect_ratio}",\n'
         f'  "target_duration_seconds": {target_duration},\n'
         '  "scenes": [\n'
         '    {\n'
         '      "scene_number": 1,\n'
         '      "narration_text": "Texto exacto de locución en español",\n'
-        '      "visual_prompt": "Minimalist 2D vector stick-figure illustration in Deep Epoch educational style, round white head with black outline, thin black stick limbs, simple flat colors, no 3D rendering, no gradients, no shading, high contrast, 9:16 vertical ratio. Two stick figure cavemen examining a puddle of dirty water, flat desert ground, text label in Spanish reading \'Agua Contaminada\'."\n'
+        f'      "visual_prompt": "{style_anchor} Two stick figure cavemen examining a puddle of dirty water, text label in Spanish reading \'Agua Contaminada\'."\n'
         '    }\n'
         '  ]\n'
         "}"
@@ -154,7 +187,8 @@ Remate/Giro Final: {idea.get('remate_o_giro', '')}
 
 {style_guidelines}
 Duración objetivo: {target_duration} segundos.
-Genera entre 2 y 3 escenas máximo. Asegúrate de estructurar visual_prompt aplicando el Style Anchor de monigotes 2D.
+Cantidad obligatoria de escenas: {target_scenes} escenas.
+Asegúrate de estructurar cada visual_prompt aplicando el Style Anchor especificado.
 """
 
     raw_content = ""
@@ -171,7 +205,7 @@ Genera entre 2 y 3 escenas máximo. Asegúrate de estructurar visual_prompt apli
                     {"role": "user", "content": user_prompt}
                 ],
                 temperature=0.7,
-                max_tokens=2500,
+                max_tokens=3500,
                 response_format={"type": "json_object"},
                 extra_body={"reasoning": {"effort": "low"}}
             )
@@ -190,11 +224,11 @@ Genera entre 2 y 3 escenas máximo. Asegúrate de estructurar visual_prompt apli
                     {"role": "user", "content": user_prompt}
                 ],
                 "temperature": 0.7,
-                "max_tokens": 2500,
+                "max_tokens": 3500,
                 "response_format": {"type": "json_object"},
                 "reasoning": {"effort": "low"}
             }
-            res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload, timeout=30)
+            res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload, timeout=45)
             res.raise_for_status()
             res_data = res.json()
             raw_content = res_data["choices"][0]["message"]["content"]
@@ -205,6 +239,12 @@ Genera entre 2 y 3 escenas máximo. Asegúrate de estructurar visual_prompt apli
             clean_json_str = re.sub(r"\n?```$", "", clean_json_str).strip()
 
         manifest_dict = json.loads(clean_json_str)
+        
+        # Garantizar que los metadatos de formato estén explícitos
+        manifest_dict["video_type"] = video_type
+        manifest_dict["aspect_ratio"] = aspect_ratio
+        manifest_dict["target_duration_seconds"] = target_duration
+
         return ScriptManifest.model_validate(manifest_dict)
 
     except Exception as e:
@@ -222,7 +262,8 @@ def display_and_review_script(manifest: ScriptManifest) -> ScriptManifest:
 
     while True:
         print("\n" + "=" * 85)
-        print(f" 📜 GUION GENERADO: '{data['title']}' ({data['target_duration_seconds']}s)")
+        print(f" 📜 GUION GENERADO: '{data['title']}' ({data['target_duration_seconds']}s | {data['video_type'].upper()} {data['aspect_ratio']})")
+        print(f" 🎬 Total Escenas: {len(data['scenes'])}")
         print("=" * 85)
 
         for sc in data["scenes"]:
@@ -276,7 +317,9 @@ def display_and_review_script(manifest: ScriptManifest) -> ScriptManifest:
 def generate_script(
     topic: Optional[str] = None,
     video_url: Optional[str] = None,
-    target_duration: int = 15,
+    target_duration: int = 60,
+    video_type: str = "long",
+    aspect_ratio: str = "16:9",
     model: str = "google/gemini-3.7-flash",
     project_dir: Optional[str] = None
 ) -> Dict[str, Any]:
@@ -306,6 +349,8 @@ def generate_script(
         idea_data=idea_data,
         reverse_analysis=reverse_analysis,
         target_duration=target_duration,
+        video_type=video_type,
+        aspect_ratio=aspect_ratio,
         model=model
     )
 
@@ -342,11 +387,15 @@ def generate_script(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generador de Guiones Faceless Engine")
-    parser.add_argument("--duration", type=int, default=15, help="Duración objetivo en segundos")
+    parser.add_argument("--duration", type=int, default=60, help="Duración objetivo en segundos")
+    parser.add_argument("--type", type=str, default="long", choices=["short", "long"], help="Tipo de video")
+    parser.add_argument("--ratio", type=str, default="16:9", choices=["9:16", "16:9"], help="Aspect Ratio")
     parser.add_argument("--model", type=str, default="google/gemini-3.7-flash", help="Modelo de OpenRouter")
 
     args = parser.parse_args()
     generate_script(
         target_duration=args.duration,
+        video_type=args.type,
+        aspect_ratio=args.ratio,
         model=args.model
     )

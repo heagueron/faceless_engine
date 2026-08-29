@@ -1,7 +1,7 @@
 import os
 import json
 import argparse
-from typing import Optional
+from typing import Optional, Tuple
 import numpy as np
 from PIL import Image
 
@@ -27,7 +27,6 @@ def get_current_project_dir() -> str:
         except Exception as e:
             print(f"⚠️ Error al leer '{current_json_path}': {e}")
 
-    # Fallback al directorio más reciente en /projects
     projects_base = "projects"
     if os.path.exists(projects_base):
         subdirs = [os.path.join(projects_base, d) for d in os.listdir(projects_base) if os.path.isdir(os.path.join(projects_base, d))]
@@ -41,24 +40,50 @@ def get_current_project_dir() -> str:
     )
 
 
-def create_ken_burns_clip(image_path: str, duration: float, zoom_in: bool = True) -> VideoClip:
-    """
-    Crea un VideoClip con movimiento de cámara sutil (Ken Burns effect).
-    - zoom_in=True:  Escala de 1.00x a 1.08x
-    - zoom_in=False: Escala de 1.08x a 1.00x
-    Manteniendo el encuadre centrado en 1080x1920 (Formato 9:16 para Shorts/Reels).
-    """
-    base_w, base_h = 1080, 1920
+def get_resolution_from_aspect_ratio(aspect_ratio: str) -> Tuple[int, int]:
+    """Retorna las dimensiones (ancho, alto) según la relación de aspecto."""
+    if aspect_ratio == "9:16":
+        return 1080, 1920
+    elif aspect_ratio == "16:9":
+        return 1920, 1080
+    else:
+        return 1920, 1080
 
-    # Cargar e inicializar la imagen base a 1080x1920 con PIL
+
+def create_ken_burns_clip(
+    image_path: str,
+    duration: float,
+    target_size: Tuple[int, int] = (1920, 1080),
+    zoom_in: bool = True
+) -> VideoClip:
+    """
+    Crea un VideoClip con movimiento de cámara sutil (Efecto Ken Burns).
+    Adapta las dimensiones según la resolución objetivo sin deformar la imagen.
+    """
+    base_w, base_h = target_size
+
     pil_img = Image.open(image_path).convert('RGB')
-    pil_img = pil_img.resize((base_w, base_h), Image.Resampling.LANCZOS)
+    img_w, img_h = pil_img.size
+
+    target_aspect = base_w / base_h
+    img_aspect = img_w / img_h
+
+    if img_aspect > target_aspect:
+        new_h_temp = base_h
+        new_w_temp = int(base_h * img_aspect)
+    else:
+        new_w_temp = base_w
+        new_h_temp = int(base_w / img_aspect)
+
+    pil_img = pil_img.resize((new_w_temp, new_h_temp), Image.Resampling.LANCZOS)
+
+    left_init = (new_w_temp - base_w) // 2
+    top_init = (new_h_temp - base_h) // 2
+    pil_img = pil_img.crop((left_init, top_init, left_init + base_w, top_init + base_h))
 
     def make_frame(t):
-        # Progreso de 0.0 a 1.0
         progress = min(max(t / duration, 0.0), 1.0) if duration > 0 else 0.0
 
-        # Calcular el factor de escala (zoom sutil del 8%)
         if zoom_in:
             scale = 1.0 + (0.08 * progress)
         else:
@@ -67,10 +92,8 @@ def create_ken_burns_clip(image_path: str, duration: float, zoom_in: bool = True
         new_w = int(base_w * scale)
         new_h = int(base_h * scale)
 
-        # Redimensionar la imagen temporalmente según la escala del cuadro actual
         scaled_img = pil_img.resize((new_w, new_h), Image.Resampling.BILINEAR)
 
-        # Recortar desde el centro para mantener exactamente 1080x1920
         left = (new_w - base_w) // 2
         top = (new_h - base_h) // 2
         cropped_img = scaled_img.crop((left, top, left + base_w, top + base_h))
@@ -83,7 +106,7 @@ def create_ken_burns_clip(image_path: str, duration: float, zoom_in: bool = True
 def assemble_final_video(project_dir: Optional[str] = None, fps: int = 24, preset: str = "ultrafast") -> str:
     """
     Une las imágenes con movimiento Ken Burns y los audios de cada escena
-    definidos en manifest.json, y genera el video final final_short.mp4.
+    definidos en manifest.json y exporta el video resultante a final.mp4.
     """
     if not project_dir:
         project_dir = get_current_project_dir()
@@ -99,8 +122,11 @@ def assemble_final_video(project_dir: Optional[str] = None, fps: int = 24, prese
     if not scenes:
         raise ValueError("El manifest.json no contiene escenas.")
 
+    aspect_ratio = manifest.get("aspect_ratio", "16:9")
+    target_size = get_resolution_from_aspect_ratio(aspect_ratio)
+
     print("\n" + "=" * 80)
-    print(" 🎬 ENSAMBLANDO VIDEO FINAL CON EFECTO KEN BURNS (9:16)")
+    print(f" 🎬 ENSAMBLANDO VIDEO FINAL ({aspect_ratio} -> {target_size[0]}x{target_size[1]})")
     print(f" 📁 Proyecto: {project_dir}")
     print(f" 🎞️ Escenas a procesar: {len(scenes)}")
     print("=" * 80)
@@ -120,11 +146,9 @@ def assemble_final_video(project_dir: Optional[str] = None, fps: int = 24, prese
             print(f" ❌ Escena {scene_num}: Falta el audio ('{audio_path}'). Omite escena.")
             continue
 
-        # Cargar audio para obtener la duración
         audio_clip = AudioFileClip(audio_path)
         duration = audio_clip.duration
 
-        # Alternar dirección del movimiento (Impar: Zoom-In / Par: Zoom-Out)
         is_zoom_in = (scene_num % 2 != 0)
         motion_type = "Zoom-In" if is_zoom_in else "Zoom-Out"
 
@@ -132,10 +156,13 @@ def assemble_final_video(project_dir: Optional[str] = None, fps: int = 24, prese
         print(f"   🖼️ Imagen: {image_path}")
         print(f"   🎙️ Audio:  {audio_path}")
 
-        # Generar clip con efecto Ken Burns
-        video_clip = create_ken_burns_clip(image_path, duration=duration, zoom_in=is_zoom_in)
+        video_clip = create_ken_burns_clip(
+            image_path=image_path,
+            duration=duration,
+            target_size=target_size,
+            zoom_in=is_zoom_in
+        )
 
-        # Asignar audio al clip (Compatibilidad MoviePy v1 / v2)
         if hasattr(video_clip, 'with_audio'):
             clip_with_audio = video_clip.with_audio(audio_clip)
         else:
@@ -150,7 +177,7 @@ def assemble_final_video(project_dir: Optional[str] = None, fps: int = 24, prese
     print("\n🎞️ Concatenando escenas animadas...")
     final_video = concatenate_videoclips(clips, method="compose")
 
-    output_video_path = os.path.join(project_dir, "final_short.mp4")
+    output_video_path = os.path.join(project_dir, "final.mp4")
     print(f"🚀 Exportando video animado a: {output_video_path}\n")
 
     final_video.write_videofile(
@@ -162,12 +189,10 @@ def assemble_final_video(project_dir: Optional[str] = None, fps: int = 24, prese
         threads=4
     )
 
-    # Liberar memoria de los clips
     for c in clips:
         c.close()
     final_video.close()
 
-    # Actualizar el manifiesto con la ruta del video resultante
     manifest["final_video_path"] = output_video_path
     with open(manifest_path, "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2, ensure_ascii=False)

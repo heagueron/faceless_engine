@@ -36,6 +36,36 @@ def create_project_dir(topic: str) -> str:
     return project_dir
 
 
+def select_video_format_and_duration():
+    """Solicita al usuario las preferencias de formato y duración del video."""
+    print("\n" + "=" * 80)
+    print(" 📐 CONFIGURACIÓN DE FORMATO Y DURACIÓN DEL VIDEO")
+    print("=" * 80)
+    print("1. Short / Reel (9:16 Vertical)")
+    print("2. Video Horizontal (16:9 Widescreen) [Defecto]")
+
+    fmt_choice = input("\nSeleccione formato (1 o 2) [Defecto: 2]: ").strip()
+
+    if fmt_choice == "1":
+        video_type = "short"
+        aspect_ratio = "9:16"
+        default_duration = 15
+    else:
+        video_type = "long"
+        aspect_ratio = "16:9"
+        default_duration = 60
+
+    dur_input = input(f"Duración estimada en segundos [Defecto: {default_duration}s]: ").strip()
+    
+    if dur_input.isdigit() and int(dur_input) > 0:
+        target_duration = int(dur_input)
+    else:
+        target_duration = default_duration
+
+    print(f"\n✔ Configuración seleccionada: Formato {video_type.upper()} ({aspect_ratio}), Duración: {target_duration}s")
+    return video_type, aspect_ratio, target_duration
+
+
 def run_pipeline():
     """Ejecuta el flujo completo de producción de video en Faceless Engine."""
     # 1. Investigar nicho, seleccionar tema e ingeniería inversa desde YouTube
@@ -47,33 +77,43 @@ def run_pipeline():
         print(f"🔗 Video de referencia: {video_url}")
     print("=" * 80)
 
-    # 2. Crear directorio de trabajo e inicializar estado
-    project_dir = create_project_dir(topic)
-    print(f"📁 Directorio de trabajo: {project_dir}\n")
+    # 2. Configurar formato (Short vs Horizontal) y duración estimada
+    video_type, aspect_ratio, target_duration = select_video_format_and_duration()
 
-    # 3. Generar y elegir ángulos/ideas virales
+    # 3. Crear directorio de trabajo e inicializar estado
+    project_dir = create_project_dir(topic)
+    print(f"\n📁 Directorio de trabajo: {project_dir}\n")
+
+    # 4. Generar y elegir ángulos/ideas virales
     print("Step 1/5: Desarrollando ángulos virales con core/ideas.py...")
     generate_ideas(topic=topic, project_dir=project_dir)
 
-    # 4. Generar guion estructurado en 2D monigotes y manifest.json
+    # 5. Generar guion estructurado en 2D monigotes y manifest.json
     print("\nStep 2/5: Generando guion con Gemini...")
-    generate_script(topic=topic, video_url=video_url, project_dir=project_dir)
+    generate_script(
+        topic=topic,
+        video_url=video_url,
+        target_duration=target_duration,
+        video_type=video_type,
+        aspect_ratio=aspect_ratio,
+        project_dir=project_dir
+    )
 
-    # 5. Generar locuciones de audio por escena
+    # 6. Generar locuciones de audio por escena
     print("\nStep 3/5: Generando audio TTS (edge-tts)...")
     generate_voice_over(project_dir=project_dir)
 
-    # 6. Generar imágenes en 2D vector vía OpenRouter
+    # 7. Generar imágenes en 2D vector vía OpenRouter
     print("\nStep 4/5: Generando recursos visuales...")
     process_scene_media(project_dir=project_dir)
 
-    # 7. Ensamblar video final con movimiento Ken Burns y audio
+    # 8. Ensamblar video final con movimiento Ken Burns y audio
     print("\nStep 5/5: Renderizando video MP4...")
     assemble_final_video(project_dir=project_dir)
 
     print("\n" + "=" * 80)
     print("🎉 PIPELINE COMPLETADO CON ÉXITO")
-    print(f"📂 Proyecto generado en: {project_dir}")
+    print(f"📁 Proyecto generado en: {project_dir}")
     print("=" * 80)
 
 
