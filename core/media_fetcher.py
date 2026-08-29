@@ -83,17 +83,22 @@ def generate_image_via_openrouter(
     model: str = "google/gemini-3.1-flash-image",
     max_retries: int = 1
 ) -> bool:
-    """Solicita la generación de imagen a OpenRouter."""
+    """Solicita la generación de imagen a OpenRouter obligando el idioma español en cualquier texto incrustado."""
     api_key = os.getenv("OPENROUTER_API_KEY")
     if not api_key:
         print("   ❌ Error: OPENROUTER_API_KEY no encontrada en .env")
         return False
 
+    # Directiva obligatoria para forzar español en cualquier texto renderizado dentro de la imagen
+    spanish_directive = " CRITICAL INSTRUCTION: All text, labels, signs, callouts, or annotations rendered inside the image MUST be written strictly in SPANISH language."
+    if "SPANISH language" not in prompt:
+        prompt = f"{prompt.rstrip('.')}.{spanish_directive}"
+
     url = "https://openrouter.ai/api/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
-        "HTTP-Referer": "https://github.com/faceless-engine",
+        "HTTP-Referer": "[https://github.com/faceless-engine](https://github.com/faceless-engine)",
         "X-Title": "Faceless Engine"
     }
 

@@ -117,20 +117,20 @@ def generate_script_from_openrouter(
             f"- Recurso de retención: {reverse_analysis.get('patron_retencion', 'Cambios visuales constantes y elementos icónicos')}\n"
         )
 
-    # SYSTEM PROMPT CON STYLE ANCHOR DEEP EPOCH (2D STICK FIGURE) INTEGRADO
     system_instruction = (
         "Eres un director de arte y guionista experto en videos virales educativos estilo 'Deep Epoch' para YouTube Shorts, Reels y TikTok (9:16).\n"
         "Tu tarea es transformar la idea recibida en un guion estructurado de 2 a 3 escenas.\n\n"
         "REGLAS ESTRICTAS DE ESTILO VISUAL (STICK FIGURE 2D):\n"
         "1. Narración (narration_text): En ESPAÑOL, directo al punto, dinámico, sin muletillas.\n"
-        "2. Prompts Visuales (visual_prompt): SIEMPRE EN INGLÉS.\n"
-        "3. Estilo Visual Obligatorio en CADA visual_prompt:\n"
+        "2. Prompts Visuales (visual_prompt): Se escriben en INGLÉS para la API de imagen.\n"
+        "3. IDIOMA DEL TEXTO DENTRO DE LA IMAGEN: Si el visual_prompt requiere texto impreso, diagramas, flechas con etiquetas, carteles o letreros en la imagen, ESE TEXTO ESPECÍFICO DEBE ESTAR EN ESPAÑOL (ej. text label in Spanish saying 'Nieve 130 km/h' o sign in Spanish with 'Peligro').\n"
+        "4. Estilo Visual Obligatorio en CADA visual_prompt:\n"
         "   - DEBES comenzar la descripción visual con este Style Anchor EXACTO:\n"
         "     'Minimalist 2D vector stick-figure illustration in Deep Epoch educational style, round white head with black outline, thin black stick limbs, simple flat colors, no 3D rendering, no gradients, no shading, high contrast, 9:16 vertical ratio.'\n"
-        "   - Luego describe los personajes de palitos (ej. 'character with 3 hair strands in a brown pelt tunic'), sus expresiones (minimalist facial expressions: dot eyes, curved mouth), acciones simples, fondo plano (flat ground/sky) y elementos icónicos o globos de diálogo simples si aplican.\n"
-        "4. La Escena 1 DEBE iniciar directamente con el gancho inicial indicado.\n"
-        "5. La última escena DEBE incluir la conclusión o giro final indicado.\n"
-        "6. Formato estricto 9:16 vertical. Evita cualquier término como 'photorealistic', '3D render', 'cinematic lighting', 'shading'.\n\n"
+        "   - Luego describe los personajes de palitos, sus expresiones, acciones simples, fondo plano y elementos icónicos.\n"
+        "5. La Escena 1 DEBE iniciar directamente con el gancho inicial indicado.\n"
+        "6. La última escena DEBE incluir la conclusión o giro final indicado.\n"
+        "7. Formato estricto 9:16 vertical. Evita términos como 'photorealistic', '3D render', 'cinematic lighting', 'shading'.\n\n"
         "Esquema JSON requerido:\n"
         "{\n"
         '  "title": "Título del video",\n'
@@ -139,7 +139,7 @@ def generate_script_from_openrouter(
         '    {\n'
         '      "scene_number": 1,\n'
         '      "narration_text": "Texto exacto de locución en español",\n'
-        '      "visual_prompt": "Minimalist 2D vector stick-figure illustration in Deep Epoch educational style, round white head with black outline, thin black stick limbs, simple flat colors, no 3D rendering, no gradients, no shading, high contrast, 9:16 vertical ratio. Two stick figure cavemen examining a puddle of dirty water, light blue sky, dry cracked desert ground, speech bubble with question mark icon."\n'
+        '      "visual_prompt": "Minimalist 2D vector stick-figure illustration in Deep Epoch educational style, round white head with black outline, thin black stick limbs, simple flat colors, no 3D rendering, no gradients, no shading, high contrast, 9:16 vertical ratio. Two stick figure cavemen examining a puddle of dirty water, flat desert ground, text label in Spanish reading \'Agua Contaminada\'."\n'
         '    }\n'
         '  ]\n'
         "}"
@@ -249,11 +249,11 @@ def display_and_review_script(manifest: ScriptManifest) -> ScriptManifest:
                     target_sc = data["scenes"][idx]
                     print(f"\n--- Editando Escena {target_sc['scene_number']} ---")
                     
-                    new_narr = input(f"Nueva locución [ENTER para mantener]: ").strip()
+                    new_narr = input("Nueva locución [ENTER para mantener]: ").strip()
                     if new_narr:
                         target_sc["narration_text"] = new_narr
                         
-                    new_vis = input(f"Nuevo prompt visual [ENTER para mantener]: ").strip()
+                    new_vis = input("Nuevo prompt visual [ENTER para mantener]: ").strip()
                     if new_vis:
                         target_sc["visual_prompt"] = new_vis
                         
@@ -320,7 +320,6 @@ def generate_script(
     if not project_dir:
         project_dir = create_project_structure(manifest_data["title"])
     else:
-        # Asegurar subcarpetas audio e images en la ruta recibida de main.py
         os.makedirs(os.path.join(project_dir, "audio"), exist_ok=True)
         os.makedirs(os.path.join(project_dir, "images"), exist_ok=True)
 
