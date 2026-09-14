@@ -121,7 +121,9 @@ def generate_script_from_openrouter(
     if aspect_ratio == "16:9":
         style_anchor = (
             "Minimalist 2D vector stick-figure illustration in Deep Epoch educational style, "
-            "round white head with black outline, thin black stick limbs, simple flat colors, "
+            "Characters: Round white head with black outline, thin black stick limbs, simple flat colors, "
+            "FACIAL FEATURES (MANDATORY): Every stick figure MUST have simple black dot eyes and a clear simple mouth line (smile, neutral line, or open mouth depending on the emotion), "
+            "NEVER generate blank, featureless, or empty white circle heads, "
             "no 3D rendering, no gradients, no shading, high contrast, 16:9 horizontal widescreen ratio, "
             "panoramic composition, flat ground line extending horizontally."
         )

@@ -103,7 +103,19 @@ def run_pipeline():
     print("\nStep 3/5: Generando audio TTS (edge-tts)...")
     generate_voice_over(project_dir=project_dir)
 
-    # 7. Generar imágenes en 2D vector vía OpenRouter
+    # Punto de revisión previo a la generación visual
+    print("\n" + "=" * 80)
+    print(" ⏸️ PUNTO DE REVISIÓN: GUION Y AUDIOS GENERADOS")
+    print("=" * 80)
+    user_confirm = input("¿Desea continuar con la generación de las imágenes? (S/n) [Defecto: S]: ").strip().lower()
+
+    if user_confirm in ["n", "no"]:
+        print(f"\n⏸️ Generación de imágenes pausada.")
+        print(f"📁 Guion y audios guardados en: {project_dir}")
+        print("Puedes revisar/editar 'manifest.json' y reanudar ejecutando: python core/media_fetcher.py")
+        return
+
+    # 7. Generar imágenes
     print("\nStep 4/5: Generando recursos visuales...")
     process_scene_media(project_dir=project_dir)
 

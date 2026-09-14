@@ -1,7 +1,7 @@
 import os
 import json
 import argparse
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 import numpy as np
 from PIL import Image
 
@@ -38,6 +38,31 @@ def get_current_project_dir() -> str:
     raise FileNotFoundError(
         "No se especificó --project_dir y no se encontró un proyecto válido en 'output/current_project.json' ni en 'projects/'."
     )
+
+
+def resolve_existing_path(configured_path: Optional[str], search_dir: str, file_prefix: str, extensions: List[str]) -> Optional[str]:
+    """
+    Busca de forma flexible la existencia de un archivo probando diferentes extensiones (.jpg, .jpeg, .png, etc.).
+    """
+    # 1. Si la ruta configurada ya existe tal cual, usarla
+    if configured_path and os.path.exists(configured_path):
+        return configured_path
+
+    # 2. Si la ruta configurada existe cambiando solo la extensión
+    if configured_path:
+        base_without_ext, _ = os.path.splitext(configured_path)
+        for ext in extensions:
+            candidate = f"{base_without_ext}{ext}"
+            if os.path.exists(candidate):
+                return candidate
+
+    # 3. Buscar en el directorio correspondiente usando el prefijo de escena
+    for ext in extensions:
+        candidate = os.path.join(search_dir, f"{file_prefix}{ext}")
+        if os.path.exists(candidate):
+            return candidate
+
+    return configured_path
 
 
 def get_resolution_from_aspect_ratio(aspect_ratio: str) -> Tuple[int, int]:
@@ -132,18 +157,34 @@ def assemble_final_video(project_dir: Optional[str] = None, fps: int = 24, prese
     print("=" * 80)
 
     clips = []
+    image_extensions = [".jpg", ".jpeg", ".png", ".webp"]
+    audio_extensions = [".mp3", ".wav", ".m4a", ".ogg"]
 
     for idx, scene in enumerate(scenes, 1):
         scene_num = scene.get("scene_number", idx)
-        image_path = scene.get("image_path") or os.path.join(project_dir, "images", f"scene_{scene_num}.jpg")
-        audio_path = scene.get("audio_file") or scene.get("audio_path") or os.path.join(project_dir, "audio", f"scene_{scene_num}.mp3")
 
-        if not os.path.exists(image_path):
-            print(f" ❌ Escena {scene_num}: Falta la imagen ('{image_path}'). Omite escena.")
+        raw_img_path = scene.get("image_path")
+        image_path = resolve_existing_path(
+            configured_path=raw_img_path,
+            search_dir=os.path.join(project_dir, "images"),
+            file_prefix=f"scene_{scene_num}",
+            extensions=image_extensions
+        ) or os.path.join(project_dir, "images", f"scene_{scene_num}.jpg")
+
+        raw_audio_path = scene.get("audio_file") or scene.get("audio_path")
+        audio_path = resolve_existing_path(
+            configured_path=raw_audio_path,
+            search_dir=os.path.join(project_dir, "audio"),
+            file_prefix=f"scene_{scene_num}",
+            extensions=audio_extensions
+        ) or os.path.join(project_dir, "audio", f"scene_{scene_num}.mp3")
+
+        if not image_path or not os.path.exists(image_path):
+            print(f" ❌ Escena {scene_num}: Falta la imagen ('{image_path}'). Omitiendo escena.")
             continue
 
-        if not os.path.exists(audio_path):
-            print(f" ❌ Escena {scene_num}: Falta el audio ('{audio_path}'). Omite escena.")
+        if not audio_path or not os.path.exists(audio_path):
+            print(f" ❌ Escena {scene_num}: Falta el audio ('{audio_path}'). Omitiendo escena.")
             continue
 
         audio_clip = AudioFileClip(audio_path)
