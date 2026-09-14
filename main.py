@@ -10,6 +10,7 @@ from core.script_generator import generate_script
 from core.voice_generator import generate_voice_over
 from core.media_fetcher import process_scene_media
 from core.video_composer import assemble_final_video
+from core.caption_generator import generate_srt_from_project
 
 
 def slugify(text: str) -> str:
@@ -122,6 +123,10 @@ def run_pipeline():
     # 8. Ensamblar video final con movimiento Ken Burns y audio
     print("\nStep 5/5: Renderizando video MP4...")
     assemble_final_video(project_dir=project_dir)
+
+    # 9. Generación final del archivo SRT para subida a YouTube
+    if project_dir:
+        generate_srt_from_project(project_dir)
 
     print("\n" + "=" * 80)
     print("🎉 PIPELINE COMPLETADO CON ÉXITO")
