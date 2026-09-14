@@ -17,11 +17,29 @@ from pydantic import BaseModel, Field
 load_dotenv()
 
 
+# --- CONSTANTES DE ESTILO VISUAL ---
+
+CHARACTER_STYLE = (
+    "Expressive 2D comic book stick-figure illustration in hand-drawn ink line art with soft cell shading. "
+    "Characters: Thin black stick limbs, round white head with black outline, simple black dot eyes, clear mouth facial expressions, "
+    "detailed hairstyles, and simple textured outfits or clothing."
+)
+
+BG_FLAT = "Clean off-white minimalist flat background, high contrast, zero clutter, spacious layout for clear text readability, labels, and diagrams."
+BG_ENVIRONMENT = "Detailed painted environment background, warm earth tones, soft depth of field."
+
+TEXT_KEYWORDS = ["text", "label", "title", "chart", "diagram", "table", "cartel", "letrero", "escrib", "words", "reading"]
+
+
 # --- ESQUEMAS DE DATOS (PYDANTIC) ---
 
 class Scene(BaseModel):
     scene_number: int = Field(description="Número secuencial de la escena (1, 2, 3...)")
     narration_text: str = Field(description="Texto en español que dirá la voz en off para esta escena")
+    bg_type: str = Field(
+        default="environment", 
+        description="Tipo de fondo: 'flat' si la escena es EXCLUSIVAMENTE un diagrama/tabla/infografía; 'environment' para escenas narrativas, históricas o con paisajes (incluso si tienen etiquetas de texto)."
+    )
     visual_prompt: str = Field(description="Prompt visual ultradetallado en INGLÉS listo para generador de imágenes 2D")
     audio_file: Optional[str] = Field(default=None, description="Ruta al archivo MP3 de la escena")
     audio_duration_seconds: Optional[float] = Field(default=None, description="Duración exacta en segundos del audio")
@@ -31,7 +49,7 @@ class Scene(BaseModel):
 class ScriptManifest(BaseModel):
     title: str = Field(description="Título sugerido y atractivo para el video")
     video_type: str = Field(default="short", description="Tipo de video: 'short' o 'long'")
-    aspect_ratio: str = Field(default="9:16", description="Relación de aspecto: '9:16' o '16:9'")
+    aspect_ratio: str = Field(default="16:9", description="Relación de aspecto: '9:16' o '16:9'")
     target_duration_seconds: int = Field(description="Duración estimada del video completo en segundos")
     scenes: List[Scene] = Field(description="Lista ordenada de las escenas que componen el guion")
     total_audio_duration_seconds: Optional[float] = Field(default=None, description="Duración acumulada de los audios")
@@ -93,6 +111,38 @@ def load_reverse_analysis() -> Optional[Dict[str, Any]]:
     return None
 
 
+def apply_prompt_safeguards(scenes: List[Dict[str, Any]], aspect_ratio: str) -> List[Dict[str, Any]]:
+    """
+    Aplica el estilo base y ensambla el fondo correcto según la clasificación 'bg_type'
+    generada estructuralmente en el manifiesto.
+    """
+    ratio_directive = "16:9 horizontal widescreen ratio" if aspect_ratio == "16:9" else "9:16 vertical ratio"
+
+    for scene in scenes:
+        prompt = scene.get("visual_prompt", "").strip()
+        bg_type = scene.get("bg_type", "environment").lower()
+
+        # 1. Inyectar estilo base del personaje si no está presente
+        if "Expressive 2D comic" not in prompt:
+            prompt = f"{CHARACTER_STYLE} {prompt}"
+
+        # 2. Asignar fondo según la clasificación estructural del JSON
+        if bg_type == "flat":
+            if "flat background" not in prompt.lower():
+                prompt += f". {BG_FLAT}"
+        else:
+            if "environment" not in prompt.lower() and "background" not in prompt.lower():
+                prompt += f". {BG_ENVIRONMENT}"
+
+        # 3. Garantizar ratio de aspecto
+        if ratio_directive not in prompt:
+            prompt += f", {ratio_directive}."
+
+        scene["visual_prompt"] = prompt
+
+    return scenes
+
+
 # --- GENERADOR VIA OPENROUTER ---
 
 def generate_script_from_openrouter(
@@ -112,32 +162,14 @@ def generate_script_from_openrouter(
     topic = idea_data.get("topic", "")
     idea = idea_data.get("selected_idea", {})
 
-    # Cálculo dinámico de cantidad de escenas (promedio ~7s por escena)
     target_scenes = max(3, round(target_duration / 7.0))
 
     print(f"\n🧠 Generando guion de {target_duration}s ({target_scenes} escenas estimadas, formato {aspect_ratio}) usando {model}...")
 
-    # Selección de Style Anchor según el aspect ratio
-    if aspect_ratio == "16:9":
-        style_anchor = (
-            "Minimalist 2D vector stick-figure illustration in Deep Epoch educational style, "
-            "Characters: Round white head with black outline, thin black stick limbs, simple flat colors, "
-            "FACIAL FEATURES (MANDATORY): Every stick figure MUST have simple black dot eyes and a clear simple mouth line (smile, neutral line, or open mouth depending on the emotion), "
-            "NEVER generate blank, featureless, or empty white circle heads, "
-            "no 3D rendering, no gradients, no shading, high contrast, 16:9 horizontal widescreen ratio, "
-            "panoramic composition, flat ground line extending horizontally."
-        )
-    else:
-        style_anchor = (
-            "Minimalist 2D vector stick-figure illustration in Deep Epoch educational style, "
-            "round white head with black outline, thin black stick limbs, simple flat colors, "
-            "no 3D rendering, no gradients, no shading, high contrast, 9:16 vertical ratio."
-        )
-
     narrative_structure_instructions = ""
     if video_type == "long":
         narrative_structure_instructions = (
-            f"ESTRUCURA NARRATIVA PARA FORMATO LARGO ({target_scenes} escenas exactas):\n"
+            f"ESTRUCTURA NARRATIVA PARA FORMATO LARGO ({target_scenes} escenas exactas):\n"
             "- Escena 1: Gancho inicial directo e impactante.\n"
             "- Escena 2: Introducción al problema o tema central.\n"
             f"- Escenas 3 a {target_scenes - 1}: Desarrollo pedagógico paso a paso, dividido en conceptos clave o ejemplos visuales.\n"
@@ -152,18 +184,16 @@ def generate_script_from_openrouter(
         )
 
     system_instruction = (
-        f"Eres un director de arte y guionista experto en videos educativos virales en formato monigotes 2D ('Deep Epoch style').\n"
+        "Eres un director de arte y guionista experto en videos educativos virales en formato monigotes 2D expresivos.\n"
         f"Tu tarea es transformar la idea recibida en un guion estructurado de EXACTAMENTE {target_scenes} escenas.\n\n"
         f"{narrative_structure_instructions}"
-        "REGLAS ESTRICTAS DE ESTILO VISUAL (STICK FIGURE 2D):\n"
-        "1. Narración (narration_text): En ESPAÑOL, directo al punto, dinámico, sin muletillas.\n"
-        "2. Prompts Visuales (visual_prompt): Se escriben en INGLÉS para la API de imagen.\n"
-        "3. IDIOMA DEL TEXTO DENTRO DE LA IMAGEN: Si el visual_prompt requiere texto impreso, diagramas, flechas con etiquetas, carteles o letreros en la imagen, ESE TEXTO ESPECÍFICO DEBE ESTAR EN ESPAÑOL (ej. text label in Spanish saying 'Nieve 130 km/h').\n"
-        "4. Estilo Visual Obligatorio en CADA visual_prompt:\n"
-        f"   - DEBES comenzar la descripción visual con este Style Anchor EXACTO:\n"
-        f"     '{style_anchor}'\n"
-        "   - Luego describe los personajes de palitos, sus expresiones, acciones simples, fondo plano y elementos icónicos.\n"
-        "5. Evita términos como 'photorealistic', '3D render', 'cinematic lighting', 'shading'.\n\n"
+        "REGLAS ESTRICTAS DE CLASIFICACIÓN DE FONDO (bg_type):\n"
+        "1. bg_type = 'environment': Úsalo para escenas narrativas, históricas, de acción o situaciones donde los personajes interactúan en un entorno (castillos, desiertos, laboratorios, ciudades). INCLUSO si la escena incluye un cartel, letrero o etiqueta flotante (ej. 'Foso Defensivo'), el fondo DEBE ser 'environment'.\n"
+        "2. bg_type = 'flat': Úsalo ÚNICAMENTE cuando la escena sea un esquema abstracto, una tabla comparativa, una lista de viñetas o un diagrama técnico donde el entorno estorbe la lectura.\n"
+        "3. REGULACIÓN DE TEXTO EN PANTALLA: No recargues todas las escenas con texto. Usa texto escrito en la imagen solo cuando agregue valor pedagógico real.\n\n"
+        "REGLAS DE ESTILO VISUAL:\n"
+        "- Narración en español; visual_prompt en inglés; textos impresos dentro de la imagen en español.\n"
+        "- Personajes: Monigotes expresivos, trazo de tinta, sombra suave, cabeza blanca con ojos y boca definida, ropa según contexto.\n\n"
         "Esquema JSON requerido:\n"
         "{\n"
         '  "title": "Título del video",\n'
@@ -174,7 +204,8 @@ def generate_script_from_openrouter(
         '    {\n'
         '      "scene_number": 1,\n'
         '      "narration_text": "Texto exacto de locución en español",\n'
-        f'      "visual_prompt": "{style_anchor} Two stick figure cavemen examining a puddle of dirty water, text label in Spanish reading \'Agua Contaminada\'."\n'
+        '      "bg_type": "environment",\n'
+        f'      "visual_prompt": "A stick figure king standing atop a secure medieval fortress surrounded by a deep water moat, holding a financial chart, text label reading \'Foso Defensivo\'."\n'
         '    }\n'
         '  ]\n'
         "}"
@@ -190,7 +221,7 @@ Remate/Giro Final: {idea.get('remate_o_giro', '')}
 {style_guidelines}
 Duración objetivo: {target_duration} segundos.
 Cantidad obligatoria de escenas: {target_scenes} escenas.
-Asegúrate de estructurar cada visual_prompt aplicando el Style Anchor especificado.
+Asegúrate de estructurar cada visual_prompt según el tipo de escena (fondo plano para texto vs fondo pintado para narrativa).
 """
 
     raw_content = ""
@@ -241,8 +272,11 @@ Asegúrate de estructurar cada visual_prompt aplicando el Style Anchor especific
             clean_json_str = re.sub(r"\n?```$", "", clean_json_str).strip()
 
         manifest_dict = json.loads(clean_json_str)
-        
-        # Garantizar que los metadatos de formato estén explícitos
+
+        # Aplicar salvaguardas de fondo y detalles de personaje
+        manifest_dict["scenes"] = apply_prompt_safeguards(manifest_dict.get("scenes", []), aspect_ratio)
+
+        # Garantizar metadatos de formato
         manifest_dict["video_type"] = video_type
         manifest_dict["aspect_ratio"] = aspect_ratio
         manifest_dict["target_duration_seconds"] = target_duration
@@ -291,15 +325,15 @@ def display_and_review_script(manifest: ScriptManifest) -> ScriptManifest:
                 if 0 <= idx < len(data["scenes"]):
                     target_sc = data["scenes"][idx]
                     print(f"\n--- Editando Escena {target_sc['scene_number']} ---")
-                    
+
                     new_narr = input("Nueva locución [ENTER para mantener]: ").strip()
                     if new_narr:
                         target_sc["narration_text"] = new_narr
-                        
+
                     new_vis = input("Nuevo prompt visual [ENTER para mantener]: ").strip()
                     if new_vis:
                         target_sc["visual_prompt"] = new_vis
-                        
+
                     print(f"✔ Escena {target_sc['scene_number']} actualizada.")
                 else:
                     print("⚠️ Número de escena fuera de rango.")

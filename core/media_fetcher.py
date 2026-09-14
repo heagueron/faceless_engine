@@ -59,7 +59,8 @@ def create_fallback_image(output_path: str, scene_num: int, text: str, aspect_ra
 def generate_image_via_fal(
     prompt: str,
     output_path: str,
-    model: str = "fal-ai/flux/schnell",
+    # model: str = "fal-ai/flux/schnell",
+    model: str = "fal-ai/qwen-image-2512",
     aspect_ratio: str = "16:9",
     max_retries: int = 3,
     retry_delay: float = 3.0
