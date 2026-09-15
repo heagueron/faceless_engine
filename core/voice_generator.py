@@ -1,10 +1,23 @@
 import os
+import re
 import json
 import asyncio
 import argparse
 from typing import Optional
 import edge_tts
 from mutagen.mp3 import MP3
+
+
+def normalize_numbers_for_tts(text: str) -> str:
+    """
+    Remueve los puntos de separación de miles en números (ej. '20.000' -> '20000', '1.000.000' -> '1000000')
+    para evitar que los motores TTS los interpreten como decimales.
+    """
+    pattern = r'(?<=\d)\.(?=\d{3}(?:\D|$))'
+    cleaned_text = re.sub(pattern, '', text)
+    while re.search(pattern, cleaned_text):
+        cleaned_text = re.sub(pattern, '', cleaned_text)
+    return cleaned_text
 
 
 def get_current_project_dir() -> str:
@@ -110,14 +123,19 @@ def generate_voice_over(
             print(f" ⚠️ Escena {scene_num}: Sin texto de locución, salteando...")
             continue
 
+        # Normalización de números para eliminar puntos de miles antes de enviar al motor TTS
+        tts_text = normalize_numbers_for_tts(text)
+
         audio_filename = f"scene_{scene_num}.mp3"
         audio_path = os.path.join(audio_dir, audio_filename)
 
         print(f"\n🎙️ Generando voz para Escena {scene_num}...")
-        print(f"   Texto: \"{text}\"")
+        print(f"   Texto original: \"{text}\"")
+        if tts_text != text:
+            print(f"   Texto procesado TTS: \"{tts_text}\"")
 
         try:
-            duration = generate_scene_audio(text, audio_path, voice=voice.strip(), rate=rate)
+            duration = generate_scene_audio(tts_text, audio_path, voice=voice.strip(), rate=rate)
             scene["audio_file"] = audio_path
             scene["audio_duration_seconds"] = duration
             print(f"   ✔ Guardado: {audio_path} ({duration}s)")
