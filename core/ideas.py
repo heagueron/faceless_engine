@@ -19,7 +19,7 @@ load_dotenv()
 # --- ESQUEMAS DE DATOS (PYDANTIC) ---
 
 class VideoIdea(BaseModel):
-    id: int = Field(description="Número de la opción (1, 2, 3...)")
+    id: int = Field(description="Número de la opción (1, 2, 3, 4, 5...)")
     titulo: str = Field(description="Título sugerido, atractivo y corto para el Short")
     gancho_inicial: str = Field(description="Gancho de los primeros 0-3 segundos para capturar la atención")
     resumen_premisa: str = Field(description="Desarrollo o historia principal sintetizada en 2 oraciones")
@@ -28,10 +28,10 @@ class VideoIdea(BaseModel):
 
 class IdeasResponse(BaseModel):
     topic: str = Field(description="Tema general de la consulta")
-    ideas: List[VideoIdea] = Field(description="Lista de 3 propuestas de ángulos virales")
+    ideas: List[VideoIdea] = Field(description="Lista de 5 propuestas de ángulos virales")
 
 
-# --- CARGA DE ANALISIS PREVIO ---
+# --- CARGA DE ANÁLISIS PREVIO ---
 
 def load_reverse_analysis() -> Optional[Dict[str, Any]]:
     """Carga el análisis de ingeniería inversa si existe en output/."""
@@ -46,14 +46,14 @@ def load_reverse_analysis() -> Optional[Dict[str, Any]]:
     return None
 
 
-# --- GENERADOR DE IDEAS VIA OPENROUTER ---
+# --- GENERADOR DE IDEAS VÍA OPENROUTER ---
 
 def generate_ideas_from_openrouter(
     topic: str,
     reverse_analysis: Optional[Dict[str, Any]] = None,
     model: str = "google/gemini-3.7-flash"
 ) -> Optional[IdeasResponse]:
-    """Genera 3 propuestas de ángulos de video mediante OpenRouter."""
+    """Genera 5 propuestas de ángulos de video mediante OpenRouter."""
     api_key = os.getenv("OPENROUTER_API_KEY")
     if not api_key:
         print("❌ Error: OPENROUTER_API_KEY no encontrada en .env")
@@ -70,7 +70,7 @@ def generate_ideas_from_openrouter(
 
     system_instruction = (
         "Eres un estratega de contenido experto en YouTube Shorts, Reels y TikTok.\n"
-        "Tu objetivo es proponer 3 ángulos virales distintos y altamente atractivos basados en el tema proporcionado.\n"
+        "Tu objetivo es proponer 5 ángulos virales distintos y altamente atractivos basados en el tema proporcionado.\n"
         "Cada opción debe incluir un gancho inicial irresistible (primeros 3 segundos), un resumen rápido de la premisa y un remate final memorable.\n\n"
         "Responde EXCLUSIVAMENTE en JSON que cumpla el esquema requerido:\n"
         "{\n"
@@ -91,7 +91,7 @@ def generate_ideas_from_openrouter(
 Tema principal: {topic}
 {style_guidelines}
 
-Genera 3 propuestas de ideas con enfoques dramáticos, educativos o curiosos para capturar el máximo de retención.
+Genera 5 propuestas de ideas con enfoques dramáticos, educativos, contraintuitivos o curiosos para capturar el máximo de retención.
 """
 
     raw_content = ""
@@ -108,7 +108,7 @@ Genera 3 propuestas de ideas con enfoques dramáticos, educativos o curiosos par
                     {"role": "user", "content": user_prompt}
                 ],
                 temperature=0.8,
-                max_tokens=2000,
+                max_tokens=2500,
                 response_format={"type": "json_object"}
             )
             raw_content = response.choices[0].message.content
@@ -126,7 +126,7 @@ Genera 3 propuestas de ideas con enfoques dramáticos, educativos o curiosos par
                     {"role": "user", "content": user_prompt}
                 ],
                 "temperature": 0.8,
-                "max_tokens": 2000,
+                "max_tokens": 2500,
                 "response_format": {"type": "json_object"}
             }
             res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload, timeout=30)
@@ -149,10 +149,27 @@ Genera 3 propuestas de ideas con enfoques dramáticos, educativos o curiosos par
         return None
 
 
-# --- SELECCIÓN INTERACTIVA ---
+# --- SELECCIÓN E INTERACCIÓN ---
+
+def _prompt_custom_idea(default_topic: str) -> VideoIdea:
+    """Permite crear o ingresar manualmente una idea personalizada."""
+    print("\n✏️  MODO IDEA PERSONALIZADA")
+    titulo = input(f"   • Título [{default_topic}]: ").strip() or default_topic
+    gancho = input("   • Gancho inicial (0-3s): ").strip() or f"¿Conocías esto sobre {default_topic}?"
+    premisa = input("   • Resumen de premisa: ").strip() or f"Desarrollo sobre {default_topic}."
+    remate = input("   • Remate o giro final: ").strip() or "Un dato imperdible."
+
+    return VideoIdea(
+        id=0,
+        titulo=titulo,
+        gancho_inicial=gancho,
+        resumen_premisa=premisa,
+        remate_o_giro=remate
+    )
+
 
 def select_idea_interactive(ideas_res: IdeasResponse) -> VideoIdea:
-    """Muestra las opciones en consola y permite al usuario seleccionar una."""
+    """Muestra las 5 opciones en consola y permite elegir una, combinar varias o crear una personalizada."""
     ideas = ideas_res.ideas
 
     print("\n" + "=" * 85)
@@ -166,18 +183,77 @@ def select_idea_interactive(ideas_res: IdeasResponse) -> VideoIdea:
         print(f"   💥 Remate:      {idea.remate_o_giro}")
 
     print("\n" + "=" * 85)
-    
+    print("Opciones de selección:")
+    print("  • Número único (ej. '1' o '5') -> Selecciona esa idea.")
+    print("  • Combinación (ej. '1,3' o '1+4+5') -> Fusiona las ideas seleccionadas.")
+    print("  • '0' o 'c' -> Ingresar o editar una idea personalizada.")
+    print("=" * 85)
+
     while True:
-        choice = input(f"👉 Selecciona una opción [1-{len(ideas)}] (ENTER para opción 1): ").strip()
+        choice = input(f"👉 Selección [1-{len(ideas)}, combinación o 0] (ENTER para opción 1): ").strip().lower()
+
         if choice == "":
             selected = ideas[0]
             break
-        elif choice.isdigit():
-            val = int(choice)
-            if 1 <= val <= len(ideas):
-                selected = ideas[val - 1]
-                break
-        print("⚠️ Selección inválida. Intenta de nuevo.")
+
+        if choice in ["0", "c", "custom"]:
+            selected = _prompt_custom_idea(ideas_res.topic)
+            break
+
+        # Extraer índices de la entrada (soporta comas, signos más o espacios)
+        indices = [int(n) for n in re.split(r'[,+\s]+', choice) if n.isdigit()]
+        valid_indices = [idx for idx in indices if 1 <= idx <= len(ideas)]
+
+        if not valid_indices:
+            print("⚠️ Selección inválida. Ingrese un número válido, combinación o '0'.")
+            continue
+
+        # Selección única
+        if len(valid_indices) == 1:
+            selected = ideas[valid_indices[0] - 1]
+            break
+
+        # Combinación de múltiples opciones
+        selected_ideas = [ideas[i - 1] for i in valid_indices]
+        print(f"\n🔀 Combinando opciones: {', '.join(f'#{i}' for i in valid_indices)}...")
+
+        combined_titulo = " / ".join([i.titulo for i in selected_ideas])
+        combined_gancho = " ".join([i.gancho_inicial for i in selected_ideas])
+        combined_premisa = " ".join([i.resumen_premisa for i in selected_ideas])
+        combined_remate = " ".join([i.remate_o_giro for i in selected_ideas])
+
+        print("\n--- IDEA FUSIONADA DRAFT ---")
+        print(f"📌 Título:  {combined_titulo}")
+        print(f"🎣 Gancho:  {combined_gancho}")
+        print(f"📖 Premisa: {combined_premisa}")
+        print(f"💥 Remate:  {combined_remate}")
+        print("---------------------------")
+
+        confirm = input("¿Deseas usar esta combinación tal cual [S], editarla [E] o reintentar [N]? ").strip().lower()
+        if confirm in ["s", "si", "yes", "y", ""]:
+            selected = VideoIdea(
+                id=99,
+                titulo=combined_titulo,
+                gancho_inicial=combined_gancho,
+                resumen_premisa=combined_premisa,
+                remate_o_giro=combined_remate
+            )
+            break
+        elif confirm in ["e", "editar"]:
+            print("\n✏️  Edición de la combinación:")
+            edit_titulo = input(f"   • Título [{combined_titulo}]: ").strip() or combined_titulo
+            edit_gancho = input(f"   • Gancho [{combined_gancho}]: ").strip() or combined_gancho
+            edit_premisa = input(f"   • Premisa [{combined_premisa}]: ").strip() or combined_premisa
+            edit_remate = input(f"   • Remate [{combined_remate}]: ").strip() or combined_remate
+
+            selected = VideoIdea(
+                id=99,
+                titulo=edit_titulo,
+                gancho_inicial=edit_gancho,
+                resumen_premisa=edit_premisa,
+                remate_o_giro=edit_remate
+            )
+            break
 
     print(f"\n✔ Ángulo seleccionado: '{selected.titulo}'")
     return selected

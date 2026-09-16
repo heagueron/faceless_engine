@@ -41,6 +41,10 @@ class Scene(BaseModel):
         description="Tipo de fondo: 'flat' si la escena es EXCLUSIVAMENTE un diagrama/tabla/infografía; 'environment' para escenas narrativas, históricas o con paisajes (incluso si tienen etiquetas de texto)."
     )
     visual_prompt: str = Field(description="Prompt visual ultradetallado en INGLÉS listo para generador de imágenes 2D")
+    is_interactive_cta: bool = Field(
+        default=False,
+        description="True únicamente si esta escena es una pregunta final condicional para generar interacción en los comentarios."
+    )
     audio_file: Optional[str] = Field(default=None, description="Ruta al archivo MP3 de la escena")
     audio_duration_seconds: Optional[float] = Field(default=None, description="Duración exacta en segundos del audio")
     image_path: Optional[str] = Field(default=None, description="Ruta a la imagen o video generado para la escena")
@@ -51,6 +55,10 @@ class ScriptManifest(BaseModel):
     video_type: str = Field(default="short", description="Tipo de video: 'short' o 'long'")
     aspect_ratio: str = Field(default="16:9", description="Relación de aspecto: '9:16' o '16:9'")
     target_duration_seconds: int = Field(description="Duración estimada del video completo en segundos")
+    includes_interactive_cta: bool = Field(
+        default=False,
+        description="Indica si el guion incluye una escena final con pregunta de debate para los comentarios."
+    )
     scenes: List[Scene] = Field(description="Lista ordenada de las escenas que componen el guion")
     total_audio_duration_seconds: Optional[float] = Field(default=None, description="Duración acumulada de los audios")
 
@@ -143,7 +151,7 @@ def apply_prompt_safeguards(scenes: List[Dict[str, Any]], aspect_ratio: str) -> 
     return scenes
 
 
-# --- GENERADOR VIA OPENROUTER ---
+# --- GENERADOR VÍA OPENROUTER ---
 
 def generate_script_from_openrouter(
     idea_data: Dict[str, Any],
@@ -169,7 +177,7 @@ def generate_script_from_openrouter(
     narrative_structure_instructions = ""
     if video_type == "long":
         narrative_structure_instructions = (
-            f"ESTRUCTURA NARRATIVA PARA FORMATO LARGO ({target_scenes} escenas exactas):\n"
+            f"ESTRUCTURA NARRATIVA PARA FORMATO LARGO ({target_scenes} escenas principales):\n"
             "- Escena 1: Gancho inicial directo e impactante.\n"
             "- Escena 2: Introducción al problema o tema central.\n"
             f"- Escenas 3 a {target_scenes - 1}: Desarrollo pedagógico paso a paso, dividido en conceptos clave o ejemplos visuales.\n"
@@ -184,13 +192,19 @@ def generate_script_from_openrouter(
         )
 
     system_instruction = (
-        "Eres un director de arte y guionista experto en videos educativos virales en formato monigotes 2D expresivos.\n"
-        f"Tu tarea es transformar la idea recibida en un guion estructurado de EXACTAMENTE {target_scenes} escenas.\n\n"
+        "Eres un director de arte y guionista experto en videos educativos virales de economía y finanzas en formato monigotes 2D expresivos.\n"
+        f"Tu tarea es transformar la idea recibida en un guion estructurado de aproximadamente {target_scenes} escenas principales.\n\n"
         f"{narrative_structure_instructions}"
         "REGLAS ESTRICTAS DE CLASIFICACIÓN DE FONDO (bg_type):\n"
-        "1. bg_type = 'environment': Úsalo para escenas narrativas, históricas, de acción o situaciones donde los personajes interactúan en un entorno (castillos, desiertos, laboratorios, ciudades). INCLUSO si la escena incluye un cartel, letrero o etiqueta flotante (ej. 'Foso Defensivo'), el fondo DEBE ser 'environment'.\n"
+        "1. bg_type = 'environment': Úsalo para escenas narrativas, históricas, de acción o situaciones donde los personajes interactúan en un entorno (oficinas, bancos, ciudades, mercados). INCLUSO si la escena incluye un cartel, letrero o etiqueta flotante, el fondo DEBE ser 'environment'.\n"
         "2. bg_type = 'flat': Úsalo ÚNICAMENTE cuando la escena sea un esquema abstracto, una tabla comparativa, una lista de viñetas o un diagrama técnico donde el entorno estorbe la lectura.\n"
         "3. REGULACIÓN DE TEXTO EN PANTALLA: No recargues todas las escenas con texto. Usa texto escrito en la imagen solo cuando agregue valor pedagógico real.\n\n"
+        "REGLA DE ESCENA FINAL INTERACTIVA / CTA CON GLOBO DE DIÁLOGO (CONDICIONAL):\n"
+        "- Evalúa el tema del video. Si involucra debate, decisiones financieras personales, dilemas económicos o posturas divergentes, AÑADE UNA ESCENA EXTRA AL FINAL.\n"
+        "- Esta escena debe tener 'is_interactive_cta': true.\n"
+        "- Su 'narration_text' DEBE ser una única pregunta directa, chocante y corta (3-5 segundos de voz) orientada a motivar respuestas en los comentarios.\n"
+        "- IMPORTANTE: Su 'visual_prompt' DEBE mostrar al personaje monigote en pose reflexiva o inquisitiva E INCLUIR EXPLÍCITAMENTE la misma pregunta o una versión resumida escrita dentro de un globo de texto/diálogo (*comic book speech bubble*) apuntando al personaje (ej. 'with a clean white speech bubble containing the text: \"¿Tú qué opinas?\"').\n"
+        "- Si el tema es puramente histórico, explicativo, teórico o un dato factual duro donde una pregunta se sentiría forzada o artificial, NO agregues esta escena interactiva final y mantén 'includes_interactive_cta': false.\n\n"
         "REGLAS DE ESTILO VISUAL:\n"
         "- Narración en español; visual_prompt en inglés; textos impresos dentro de la imagen en español.\n"
         "- Personajes: Monigotes expresivos, trazo de tinta, sombra suave, cabeza blanca con ojos y boca definida, ropa según contexto.\n\n"
@@ -200,12 +214,21 @@ def generate_script_from_openrouter(
         f'  "video_type": "{video_type}",\n'
         f'  "aspect_ratio": "{aspect_ratio}",\n'
         f'  "target_duration_seconds": {target_duration},\n'
+        '  "includes_interactive_cta": true,\n'
         '  "scenes": [\n'
         '    {\n'
         '      "scene_number": 1,\n'
         '      "narration_text": "Texto exacto de locución en español",\n'
         '      "bg_type": "environment",\n'
-        f'      "visual_prompt": "A stick figure king standing atop a secure medieval fortress surrounded by a deep water moat, holding a financial chart, text label reading \'Foso Defensivo\'."\n'
+        '      "is_interactive_cta": false,\n'
+        '      "visual_prompt": "A stick figure executive standing atop a secure medieval fortress surrounded by a deep water moat, holding a financial chart, text label reading \'Foso Defensivo\'."\n'
+        '    },\n'
+        '    {\n'
+        '      "scene_number": 2,\n'
+        '      "narration_text": "¿Tú qué harías? ¿Comprarías o esperarías a que baje el precio?",\n'
+        '      "bg_type": "environment",\n'
+        '      "is_interactive_cta": true,\n'
+        '      "visual_prompt": "A stick figure executive in a sleek dark suit looking thoughtfully at the viewer, holding one hand on his chin in a deep reflective pose, with a large clean comic book speech bubble pointing to him containing the text: \'¿Tú qué harías? ¿Comprarías o esperarías?\'."\n'
         '    }\n'
         '  ]\n'
         "}"
@@ -220,8 +243,8 @@ Remate/Giro Final: {idea.get('remate_o_giro', '')}
 
 {style_guidelines}
 Duración objetivo: {target_duration} segundos.
-Cantidad obligatoria de escenas: {target_scenes} escenas.
-Asegúrate de estructurar cada visual_prompt según el tipo de escena (fondo plano para texto vs fondo pintado para narrativa).
+Cantidad objetivo de escenas principales: {target_scenes} escenas.
+Recuerda evaluar si el tema amerita la escena final interactiva con la pregunta redactada en un globo de texto (speech bubble).
 """
 
     raw_content = ""
@@ -297,13 +320,15 @@ def display_and_review_script(manifest: ScriptManifest) -> ScriptManifest:
     data = manifest.model_dump()
 
     while True:
+        cta_badge = " [💬 INCLUYE PREGUNTA Y GLOBO DE TEXTO]" if data.get("includes_interactive_cta") else ""
         print("\n" + "=" * 85)
-        print(f" 📜 GUION GENERADO: '{data['title']}' ({data['target_duration_seconds']}s | {data['video_type'].upper()} {data['aspect_ratio']})")
+        print(f" 📜 GUION GENERADO: '{data['title']}' ({data['target_duration_seconds']}s | {data['video_type'].upper()} {data['aspect_ratio']}){cta_badge}")
         print(f" 🎬 Total Escenas: {len(data['scenes'])}")
         print("=" * 85)
 
         for sc in data["scenes"]:
-            print(f"\n🎬 ESCENA {sc['scene_number']}:")
+            tag_cta = " 💬 [PREGUNTA INTERACTIVA CON GLOBO]" if sc.get("is_interactive_cta") else ""
+            print(f"\n🎬 ESCENA {sc['scene_number']}{tag_cta}:")
             print(f"   🗣️  Locución (ES): \"{sc['narration_text']}\"")
             print(f"   🖼️  Visual Prompt (EN): {sc['visual_prompt']}")
 
