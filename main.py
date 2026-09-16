@@ -11,6 +11,7 @@ from core.voice_generator import generate_voice_over
 from core.media_fetcher import process_scene_media
 from core.video_composer import assemble_final_video
 from core.caption_generator import generate_srt_from_project
+from core.description_generator import generate_description
 
 
 def slugify(text: str) -> str:
@@ -86,11 +87,11 @@ def run_pipeline():
     print(f"\n📁 Directorio de trabajo: {project_dir}\n")
 
     # 4. Generar y elegir ángulos/ideas virales
-    print("Step 1/5: Desarrollando ángulos virales con core/ideas.py...")
+    print("Step 1/6: Desarrollando ángulos virales con core/ideas.py...")
     generate_ideas(topic=topic, project_dir=project_dir)
 
     # 5. Generar guion estructurado en 2D monigotes y manifest.json
-    print("\nStep 2/5: Generando guion con Gemini...")
+    print("\nStep 2/6: Generando guion con Gemini...")
     generate_script(
         topic=topic,
         video_url=video_url,
@@ -101,7 +102,7 @@ def run_pipeline():
     )
 
     # 6. Generar locuciones de audio por escena
-    print("\nStep 3/5: Generando audio TTS (edge-tts)...")
+    print("\nStep 3/6: Generando audio TTS (edge-tts)...")
     generate_voice_over(project_dir=project_dir)
 
     # Punto de revisión previo a la generación visual
@@ -117,20 +118,27 @@ def run_pipeline():
         return
 
     # 7. Generar imágenes
-    print("\nStep 4/5: Generando recursos visuales...")
+    print("\nStep 4/6: Generando recursos visuales...")
     process_scene_media(project_dir=project_dir)
 
     # 8. Ensamblar video final con movimiento Ken Burns y audio
-    print("\nStep 5/5: Renderizando video MP4...")
+    print("\nStep 5/6: Renderizando video MP4...")
     assemble_final_video(project_dir=project_dir)
 
-    # 9. Generación final del archivo SRT para subida a YouTube
+    # 9. Generación de recursos finales para publicación (SRT + Descripción + Comentario Fijado + Metadatos)
+    print("\nStep 6/6: Generando metadatos y recursos de publicación (SRT, Descripción, SEO)...")
     if project_dir:
         generate_srt_from_project(project_dir)
+        generate_description(project_dir=project_dir)
 
     print("\n" + "=" * 80)
     print("🎉 PIPELINE COMPLETADO CON ÉXITO")
     print(f"📁 Proyecto generado en: {project_dir}")
+    print("  ├─ 🎥 Video MP4 renderizado")
+    print("  ├─ 📜 Subtítulos SRT")
+    print("  ├─ 📝 Descripción optimizada (description.txt)")
+    print("  ├─ 💬 Comentario fijado (pinned_comment.txt)")
+    print("  └─ ⚙️ Metadatos YouTube (metadata.json)")
     print("=" * 80)
 
 
