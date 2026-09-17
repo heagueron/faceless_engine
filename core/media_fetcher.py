@@ -9,6 +9,8 @@ from typing import Optional, Dict, Any, List
 from dotenv import load_dotenv
 from PIL import Image, ImageDraw
 
+from core.config import get_language_directive
+
 load_dotenv()
 
 try:
@@ -85,8 +87,9 @@ def create_fallback_image(output_path: str, scene_num: int, text: str, aspect_ra
     # Borde decorativo
     draw.rectangle([40, 40, width - 40, height - 40], outline=(60, 80, 110), width=6)
     
-    # Texto de la escena
-    draw.text((width // 4, height // 2 - 50), f"ESCENA {scene_num}", fill=(255, 200, 80))
+    # Texto descriptivo
+    label = f"ESCENA {scene_num}" if scene_num > 0 else "THUMBNAIL"
+    draw.text((width // 4, height // 2 - 50), label, fill=(255, 200, 80))
     
     fmt = "PNG" if output_path.lower().endswith(".png") else "JPEG"
     img.save(output_path, fmt, quality=90)
@@ -110,9 +113,9 @@ def generate_image_via_openrouter(
         print("   ❌ Error: OPENROUTER_API_KEY no encontrada en .env")
         return False
 
-    spanish_directive = " CRITICAL INSTRUCTION: All text, labels, signs, callouts, or annotations rendered inside the image MUST be written strictly in SPANISH language."
-    if "SPANISH language" not in prompt:
-        prompt = f"{prompt.rstrip('.')}.{spanish_directive}"
+    lang_directive = get_language_directive()
+    if "CRITICAL INSTRUCTION" not in prompt:
+        prompt = f"{prompt.rstrip('.')}. {lang_directive}"
 
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -219,9 +222,9 @@ def generate_image_via_fal(
 
     os.environ["FAL_KEY"] = fal_key
 
-    spanish_directive = " CRITICAL INSTRUCTION: All text, labels, signs, callouts, or annotations rendered inside the image MUST be written strictly in SPANISH language."
-    if "SPANISH language" not in prompt:
-        prompt = f"{prompt.rstrip('.')}.{spanish_directive}"
+    lang_directive = get_language_directive()
+    if "CRITICAL INSTRUCTION" not in prompt:
+        prompt = f"{prompt.rstrip('.')}. {lang_directive}"
 
     image_size = "portrait_16_9" if aspect_ratio == "9:16" else "landscape_16_9"
     current_delay = retry_delay
@@ -301,18 +304,73 @@ def is_valid_image_file(path: str) -> bool:
         return False
 
 
+def process_thumbnail(
+    project_dir: str,
+    manifest: Dict[str, Any],
+    provider_key: str,
+    selected_model: str,
+    aspect_ratio: str,
+    max_retries: int = 3,
+    force: bool = False
+) -> bool:
+    """Procesa la imagen cruda de la miniatura (thumbnail_raw.jpg) a partir del manifest."""
+    thumbnail_prompt = manifest.get("thumbnail_prompt")
+    if not thumbnail_prompt:
+        print("⚠️ 'thumbnail_prompt' no encontrado en manifest.json. Omitiendo miniatura.")
+        return False
+
+    images_dir = os.path.join(project_dir, "images")
+    output_path = os.path.join(images_dir, "thumbnail_raw.jpg")
+
+    if not force and is_valid_image_file(output_path):
+        print(f"\n⏭️ Miniatura ya existe y es válida ('thumbnail_raw.jpg'). Omitiendo por Checkpoint.")
+        manifest["thumbnail_raw_path"] = output_path
+        return True
+
+    print("\n🖼️ Procesando Miniatura Cruda (Thumbnail)...")
+    print(f"   Prompt: \"{thumbnail_prompt[:90]}...\"")
+
+    if provider_key == "openrouter":
+        success = generate_image_via_openrouter(
+            prompt=thumbnail_prompt,
+            output_path=output_path,
+            model=selected_model,
+            aspect_ratio=aspect_ratio,
+            max_retries=max_retries
+        )
+    else:
+        success = generate_image_via_fal(
+            prompt=thumbnail_prompt,
+            output_path=output_path,
+            model=selected_model,
+            aspect_ratio=aspect_ratio,
+            max_retries=max_retries
+        )
+
+    if success:
+        print(f"   ✔ Miniatura cruda generada con éxito ({provider_key.upper()}): {output_path}")
+    else:
+        print("   ⚠️ Falló la generación en línea tras reintentos. Generando respaldo local (Pillow)...")
+        create_fallback_image(output_path, 0, manifest.get("thumbnail_text", "THUMBNAIL"), aspect_ratio=aspect_ratio)
+        print(f"   ✔ Respaldo de miniatura guardado en: {output_path}")
+
+    manifest["thumbnail_raw_path"] = output_path
+    return True
+
+
 def process_scene_media(
     project_dir: str,
     provider: str = DEFAULT_IMAGE_PROVIDER,
     model: Optional[str] = None,
     max_retries: int = 3,
     target_scenes: Optional[List[int]] = None,
+    only_thumbnail: bool = False,
     force: bool = False,
     rate_limit_delay: float = 1.0
 ):
     """
-    Procesa escenas del manifest.json seleccionando el proveedor ('openrouter' o 'fal').
-    Soporta lista o rango de escenas objetivo.
+    Procesa escenas y/o miniatura del manifest.json seleccionando el proveedor ('openrouter' o 'fal').
+    Soporta procesamiento exclusivo de la miniatura (--only-thumbnail).
     """
     provider_key = provider.lower().strip()
     if provider_key not in ["openrouter", "fal"]:
@@ -332,6 +390,27 @@ def process_scene_media(
     os.makedirs(images_dir, exist_ok=True)
 
     aspect_ratio = manifest.get("aspect_ratio", "16:9")
+
+    print("\n" + "=" * 80)
+    print(f" 🖼️ GENERANDO RECURSOS VISUALES MEDIANTE {provider_key.upper()} ({selected_model})")
+    print(f" 📐 Aspect Ratio: {aspect_ratio}")
+    if only_thumbnail:
+        print(" 🎯 MODO SOLO MINIATURA (--only-thumbnail) ACTIVADO")
+    elif target_scenes:
+        print(f" 🎯 MODO SELECCIÓN DE ESCENAS: Procesando {len(target_scenes)} escena(s): {target_scenes}")
+    if force:
+        print(" 🔄 Modo FORCED activado: Re-generando imágenes seleccionadas.")
+    print("=" * 80)
+
+    # Si se solicitó únicamente la miniatura
+    if only_thumbnail:
+        process_thumbnail(project_dir, manifest, provider_key, selected_model, aspect_ratio, max_retries, force)
+        with open(manifest_path, "w", encoding="utf-8") as f:
+            json.dump(manifest, f, indent=2, ensure_ascii=False)
+        print("\n✔ Procesamiento de miniatura finalizado.")
+        return
+
+    # Procesamiento de Escenas
     all_scenes = manifest.get("scenes", [])
     if not all_scenes:
         print("⚠️ No hay escenas en manifest.json")
@@ -344,17 +423,6 @@ def process_scene_media(
             return
     else:
         scenes_to_process = all_scenes
-
-    print("\n" + "=" * 80)
-    print(f" 🖼️ GENERANDO IMÁGENES MEDIANTE {provider_key.upper()} ({selected_model})")
-    print(f" 📐 Aspect Ratio: {aspect_ratio}")
-    if target_scenes:
-        print(f" 🎯 MODO SELECCIÓN DE ESCENAS: Procesando {len(scenes_to_process)} escena(s): {target_scenes}")
-    else:
-        print(f" ⚙️ Procesando {len(scenes_to_process)} escenas | Retries: {max_retries} | Delay: {rate_limit_delay}s")
-    if force:
-        print(" 🔄 Modo FORCED activado: Re-generando todas las imágenes seleccionadas.")
-    print("=" * 80)
 
     processed_count = 0
     skipped_count = 0
@@ -406,6 +474,10 @@ def process_scene_media(
         if rate_limit_delay > 0 and (processed_count < len(scenes_to_process)):
             time.sleep(rate_limit_delay)
 
+    # Generar la miniatura cruda al finalizar el lote si no se especificaron escenas individuales
+    if not target_scenes:
+        process_thumbnail(project_dir, manifest, provider_key, selected_model, aspect_ratio, max_retries, force)
+
     with open(manifest_path, "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2, ensure_ascii=False)
 
@@ -422,6 +494,7 @@ if __name__ == "__main__":
     parser.add_argument("--model", type=str, default=None, help="Modelo específico (omita para usar el predeterminado del proveedor)")
     parser.add_argument("--retries", type=int, default=3, help="Reintentos por escena")
     parser.add_argument("--scene", type=str, default=None, help="Escena(s) a regenerar (ej: '3', '1-10', '1,3,5' o '1-3,5,8-10')")
+    parser.add_argument("--only-thumbnail", action="store_true", help="Genera ÚNICAMENTE la imagen de la miniatura (thumbnail_raw.jpg)")
     parser.add_argument("--force", action="store_true", help="Ignora el checkpoint y fuerza la regeneración")
     parser.add_argument("--delay", type=float, default=1.0, help="Pausa en segundos entre peticiones API")
 
@@ -435,6 +508,7 @@ if __name__ == "__main__":
         model=args.model,
         max_retries=args.retries,
         target_scenes=target_scenes,
+        only_thumbnail=args.only_thumbnail,
         force=args.force,
         rate_limit_delay=args.delay
     )

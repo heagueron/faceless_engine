@@ -28,8 +28,6 @@ CHARACTER_STYLE = (
 BG_FLAT = "Clean off-white minimalist flat background, high contrast, zero clutter, spacious layout for clear text readability, labels, and diagrams."
 BG_ENVIRONMENT = "Detailed painted environment background, warm earth tones, soft depth of field."
 
-TEXT_KEYWORDS = ["text", "label", "title", "chart", "diagram", "table", "cartel", "letrero", "escrib", "words", "reading"]
-
 
 # --- ESQUEMAS DE DATOS (PYDANTIC) ---
 
@@ -38,7 +36,7 @@ class Scene(BaseModel):
     narration_text: str = Field(description="Texto en español que dirá la voz en off para esta escena")
     bg_type: str = Field(
         default="environment", 
-        description="Tipo de fondo: 'flat' si la escena es EXCLUSIVAMENTE un diagrama/tabla/infografía; 'environment' para escenas narrativas, históricas o con paisajes (incluso si tienen etiquetas de texto)."
+        description="Tipo de fondo: 'flat' si la escena es EXCLUSIVAMENTE un diagrama/tabla/infografía; 'environment' para escenas narrativas, históricas o con paisajes."
     )
     visual_prompt: str = Field(description="Prompt visual ultradetallado en INGLÉS listo para generador de imágenes 2D")
     is_interactive_cta: bool = Field(
@@ -52,18 +50,24 @@ class Scene(BaseModel):
 
 class ScriptManifest(BaseModel):
     title: str = Field(description="Título sugerido y atractivo para el video")
-    video_type: str = Field(default="short", description="Tipo de video: 'short' o 'long'")
+    video_type: str = Field(default="long", description="Tipo de video: 'short' o 'long'")
     aspect_ratio: str = Field(default="16:9", description="Relación de aspecto: '9:16' o '16:9'")
     target_duration_seconds: int = Field(description="Duración estimada del video completo en segundos")
     includes_interactive_cta: bool = Field(
         default=False,
         description="Indica si el guion incluye una escena final con pregunta de debate para los comentarios."
     )
+    thumbnail_prompt: str = Field(
+        description="Prompt visual ultradetallado en INGLÉS optimizado para la miniatura."
+    )
+    thumbnail_text: str = Field(
+        description="Texto de gancho corto en MAYÚSCULAS en español para la miniatura (ej. '¡ERROR FATAL!', '¡NO HAGAS ESTO!')."
+    )
     scenes: List[Scene] = Field(description="Lista ordenada de las escenas que componen el guion")
     total_audio_duration_seconds: Optional[float] = Field(default=None, description="Duración acumulada de los audios")
 
 
-# --- MANEJO DE ESTRUCTURA DE PROYECTOS ---
+# --- MANEJO DE ESTRUCTURA DE PROYECTOS Y ARCHIVOS ---
 
 def slugify(text: str, max_words: int = 4) -> str:
     """Convierte un título en un slug limpio usando las primeras N palabras."""
@@ -81,7 +85,6 @@ def create_project_structure(title: str, base_projects_dir: str = "projects") ->
     os.makedirs(os.path.join(project_dir, "audio"), exist_ok=True)
     os.makedirs(os.path.join(project_dir, "images"), exist_ok=True)
 
-    # Registrar el proyecto activo en output/current_project.json
     os.makedirs("output", exist_ok=True)
     current_proj_path = os.path.join("output", "current_project.json")
     with open(current_proj_path, "w", encoding="utf-8") as f:
@@ -89,8 +92,6 @@ def create_project_structure(title: str, base_projects_dir: str = "projects") ->
 
     return project_dir
 
-
-# --- CARGA DE INPUTS PREVIOS ---
 
 def load_selected_idea() -> Optional[Dict[str, Any]]:
     """Carga la idea seleccionada desde output/selected_idea.json."""
@@ -119,22 +120,17 @@ def load_reverse_analysis() -> Optional[Dict[str, Any]]:
     return None
 
 
-def apply_prompt_safeguards(scenes: List[Dict[str, Any]], aspect_ratio: str) -> List[Dict[str, Any]]:
-    """
-    Aplica el estilo base y ensambla el fondo correcto según la clasificación 'bg_type'
-    generada estructuralmente en el manifiesto.
-    """
+def apply_prompt_safeguards(scenes: List[Dict[str, Any]], thumbnail_prompt: str, aspect_ratio: str) -> tuple[List[Dict[str, Any]], str]:
+    """Garantiza la presencia del estilo base y el aspect ratio en todos los prompts."""
     ratio_directive = "16:9 horizontal widescreen ratio" if aspect_ratio == "16:9" else "9:16 vertical ratio"
 
     for scene in scenes:
         prompt = scene.get("visual_prompt", "").strip()
         bg_type = scene.get("bg_type", "environment").lower()
 
-        # 1. Inyectar estilo base del personaje si no está presente
         if "Expressive 2D comic" not in prompt:
             prompt = f"{CHARACTER_STYLE} {prompt}"
 
-        # 2. Asignar fondo según la clasificación estructural del JSON
         if bg_type == "flat":
             if "flat background" not in prompt.lower():
                 prompt += f". {BG_FLAT}"
@@ -142,174 +138,235 @@ def apply_prompt_safeguards(scenes: List[Dict[str, Any]], aspect_ratio: str) -> 
             if "environment" not in prompt.lower() and "background" not in prompt.lower():
                 prompt += f". {BG_ENVIRONMENT}"
 
-        # 3. Garantizar ratio de aspecto
         if ratio_directive not in prompt:
             prompt += f", {ratio_directive}."
 
         scene["visual_prompt"] = prompt
 
-    return scenes
+    th_prompt = thumbnail_prompt.strip()
+    if "Expressive 2D comic" not in th_prompt:
+        th_prompt = f"{CHARACTER_STYLE} {th_prompt}"
+    if ratio_directive not in th_prompt:
+        th_prompt += f", {ratio_directive}."
+
+    return scenes, th_prompt
 
 
-# --- GENERADOR VÍA OPENROUTER ---
+# --- LLAMADA BASE A OPENROUTER ---
+
+def call_openrouter_api(system_instruction: str, user_prompt: str, model: str, max_tokens: int = 8192) -> str:
+    """Envía la solicitud a OpenRouter asegurando respuesta en formato JSON."""
+    api_key = os.getenv("OPENROUTER_API_KEY")
+    if not api_key:
+        raise RuntimeError("OPENROUTER_API_KEY no encontrada en .env")
+
+    clean_json_str = ""
+    if OpenAI is not None:
+        client = OpenAI(
+            base_url="https://openrouter.ai/api/v1",
+            api_key=api_key,
+        )
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_instruction},
+                {"role": "user", "content": user_prompt}
+            ],
+            temperature=0.7,
+            max_tokens=max_tokens,
+            response_format={"type": "json_object"},
+            extra_body={"reasoning": {"effort": "low"}}
+        )
+        clean_json_str = response.choices[0].message.content
+    else:
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://github.com/faceless-engine",
+            "X-Title": "Faceless Engine"
+        }
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_instruction},
+                {"role": "user", "content": user_prompt}
+            ],
+            "temperature": 0.7,
+            "max_tokens": max_tokens,
+            "response_format": {"type": "json_object"},
+            "reasoning": {"effort": "low"}
+        }
+        res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload, timeout=90)
+        res.raise_for_status()
+        res_data = res.json()
+        clean_json_str = res_data["choices"][0]["message"]["content"]
+
+    clean_json_str = clean_json_str.strip()
+    if clean_json_str.startswith("```"):
+        clean_json_str = re.sub(r"^```[a-zA-Z]*\n?", "", clean_json_str)
+        clean_json_str = re.sub(r"\n?```$", "", clean_json_str).strip()
+
+    return clean_json_str
+
+
+# --- GENERACIÓN POR LOTES (STATEFUL BATCHING) ---
 
 def generate_script_from_openrouter(
     idea_data: Dict[str, Any],
     reverse_analysis: Optional[Dict[str, Any]] = None,
-    target_duration: int = 60,
+    target_duration: int = 600,
     video_type: str = "long",
     aspect_ratio: str = "16:9",
-    model: str = "google/gemini-3.7-flash"
+    model: str = "google/gemini-3.7-flash",
+    batch_size: int = 15
 ) -> Optional[ScriptManifest]:
-    """Genera el guion enviando la idea seleccionada a OpenRouter calculando dinámicamente el número de escenas."""
-    api_key = os.getenv("OPENROUTER_API_KEY")
-    if not api_key:
-        print("❌ Error: OPENROUTER_API_KEY no encontrada en .env")
-        return None
-
+    """Genera el guion dividiendo la tarea en Escaleta Global + Lotes para evitar desbordamiento de tokens."""
     topic = idea_data.get("topic", "")
     idea = idea_data.get("selected_idea", {})
-
     target_scenes = max(3, round(target_duration / 7.0))
 
-    print(f"\n🧠 Generando guion de {target_duration}s ({target_scenes} escenas estimadas, formato {aspect_ratio}) usando {model}...")
+    print(f"\n🧠 Iniciando generación de guion: {target_duration}s (~{target_scenes} escenas, {aspect_ratio}) vía {model}...")
 
-    narrative_structure_instructions = ""
-    if video_type == "long":
-        narrative_structure_instructions = (
-            f"ESTRUCTURA NARRATIVA PARA FORMATO LARGO ({target_scenes} escenas principales):\n"
-            "- Escena 1: Gancho inicial directo e impactante.\n"
-            "- Escena 2: Introducción al problema o tema central.\n"
-            f"- Escenas 3 a {target_scenes - 1}: Desarrollo pedagógico paso a paso, dividido en conceptos clave o ejemplos visuales.\n"
-            f"- Escena {target_scenes}: Conclusión, reflexión final o remate definitivo.\n\n"
-        )
+    # --------------------------------------------------------------------------
+    # FASE 1: GENERACIÓN DE LA ESCALETA GLOBAL (MASTER OUTLINE)
+    # --------------------------------------------------------------------------
+    print("📋 [Paso 1/2] Generando la Escaleta Maestra del video...")
 
-    style_guidelines = ""
-    if reverse_analysis:
-        style_guidelines = (
-            f"- Estilo narrativo: {reverse_analysis.get('estilo_visual_narrativo', 'Educativo y directo')}\n"
-            f"- Recurso de retención: {reverse_analysis.get('patron_retencion', 'Cambios visuales constantes y elementos icónicos')}\n"
-        )
+    outline_system_prompt = f"""
+Eres un director de arte y guionista experto en videos virales educativos.
+Tu tarea es definir la ESTRUCTURA GLOBAL y la MINIATURA de un video de {target_duration} segundos.
+Debes proyectar exactamente {target_scenes} escenas continuas.
 
-    system_instruction = (
-        "Eres un director de arte y guionista experto en videos educativos virales de economía y finanzas en formato monigotes 2D expresivos.\n"
-        f"Tu tarea es transformar la idea recibida en un guion estructurado de aproximadamente {target_scenes} escenas principales.\n\n"
-        f"{narrative_structure_instructions}"
-        "REGLAS ESTRICTAS DE CLASIFICACIÓN DE FONDO (bg_type):\n"
-        "1. bg_type = 'environment': Úsalo para escenas narrativas, históricas, de acción o situaciones donde los personajes interactúan en un entorno (oficinas, bancos, ciudades, mercados). INCLUSO si la escena incluye un cartel, letrero o etiqueta flotante, el fondo DEBE ser 'environment'.\n"
-        "2. bg_type = 'flat': Úsalo ÚNICAMENTE cuando la escena sea un esquema abstracto, una tabla comparativa, una lista de viñetas o un diagrama técnico donde el entorno estorbe la lectura.\n"
-        "3. REGULACIÓN DE TEXTO EN PANTALLA: No recargues todas las escenas con texto. Usa texto escrito en la imagen solo cuando agregue valor pedagógico real.\n\n"
-        "REGLA DE ESCENA FINAL INTERACTIVA / CTA CON GLOBO DE DIÁLOGO (CONDICIONAL):\n"
-        "- Evalúa el tema del video. Si involucra debate, decisiones financieras personales, dilemas económicos o posturas divergentes, AÑADE UNA ESCENA EXTRA AL FINAL.\n"
-        "- Esta escena debe tener 'is_interactive_cta': true.\n"
-        "- Su 'narration_text' DEBE ser una única pregunta directa, chocante y corta (3-5 segundos de voz) orientada a motivar respuestas en los comentarios.\n"
-        "- IMPORTANTE: Su 'visual_prompt' DEBE mostrar al personaje monigote en pose reflexiva o inquisitiva E INCLUIR EXPLÍCITAMENTE la misma pregunta o una versión resumida escrita dentro de un globo de texto/diálogo (*comic book speech bubble*) apuntando al personaje (ej. 'with a clean white speech bubble containing the text: \"¿Tú qué opinas?\"').\n"
-        "- Si el tema es puramente histórico, explicativo, teórico o un dato factual duro donde una pregunta se sentiría forzada o artificial, NO agregues esta escena interactiva final y mantén 'includes_interactive_cta': false.\n\n"
-        "REGLAS DE ESTILO VISUAL:\n"
-        "- Narración en español; visual_prompt en inglés; textos impresos dentro de la imagen en español.\n"
-        "- Personajes: Monigotes expresivos, trazo de tinta, sombra suave, cabeza blanca con ojos y boca definida, ropa según contexto.\n\n"
-        "Esquema JSON requerido:\n"
-        "{\n"
-        '  "title": "Título del video",\n'
-        f'  "video_type": "{video_type}",\n'
-        f'  "aspect_ratio": "{aspect_ratio}",\n'
-        f'  "target_duration_seconds": {target_duration},\n'
-        '  "includes_interactive_cta": true,\n'
-        '  "scenes": [\n'
-        '    {\n'
-        '      "scene_number": 1,\n'
-        '      "narration_text": "Texto exacto de locución en español",\n'
-        '      "bg_type": "environment",\n'
-        '      "is_interactive_cta": false,\n'
-        '      "visual_prompt": "A stick figure executive standing atop a secure medieval fortress surrounded by a deep water moat, holding a financial chart, text label reading \'Foso Defensivo\'."\n'
-        '    },\n'
-        '    {\n'
-        '      "scene_number": 2,\n'
-        '      "narration_text": "¿Tú qué harías? ¿Comprarías o esperarías a que baje el precio?",\n'
-        '      "bg_type": "environment",\n'
-        '      "is_interactive_cta": true,\n'
-        '      "visual_prompt": "A stick figure executive in a sleek dark suit looking thoughtfully at the viewer, holding one hand on his chin in a deep reflective pose, with a large clean comic book speech bubble pointing to him containing the text: \'¿Tú qué harías? ¿Comprarías o esperarías?\'."\n'
-        '    }\n'
-        '  ]\n'
-        "}"
-    )
+REGLAS DE MINIATURA (THUMBNAIL):
+1. STRICT NO-TEXT RULE IN RAW IMAGE: The thumbnail_prompt raw image MUST be 100% clean of typography.
+2. VIBRANT CARTOON COLOR PALETTE: Saturated 2D cartoon vector style, high-contrast split backgrounds.
+3. TIGHT COMPOSITION: Medium close-up shot, characters fill 80% frame near center.
+4. thumbnail_prompt: Prompt ultradetallado en INGLÉS.
+5. thumbnail_text: Texto de gancho en MAYÚSCULAS en español (2-3 palabras máximo) o "" si no aplica.
 
-    user_prompt = f"""
-Tema general: {topic}
-Título/Idea: {idea.get('titulo', topic)}
-Gancho Obligatorio (0-3s): {idea.get('gancho_inicial', '')}
-Premisa/Desarrollo: {idea.get('resumen_premisa', '')}
-Remate/Giro Final: {idea.get('remate_o_giro', '')}
-
-{style_guidelines}
-Duración objetivo: {target_duration} segundos.
-Cantidad objetivo de escenas principales: {target_scenes} escenas.
-Recuerda evaluar si el tema amerita la escena final interactiva con la pregunta redactada en un globo de texto (speech bubble).
+Esquema JSON requerido:
+{{
+  "title": "Título del video",
+  "includes_interactive_cta": true,
+  "thumbnail_prompt": "...",
+  "thumbnail_text": "¡ERROR FATAL!",
+  "master_outline": [
+    {{"scene_number": 1, "narration_summary": "Resumen de lo que se hablará..."}},
+    ...
+    {{"scene_number": {target_scenes}, "narration_summary": "..."}}
+  ]
+}}
 """
 
-    raw_content = ""
+    outline_user_prompt = f"""
+Tema: {topic}
+Título/Idea: {idea.get('titulo', topic)}
+Gancho Inicial: {idea.get('gancho_inicial', '')}
+Premisa: {idea.get('resumen_premisa', '')}
+Giro Final: {idea.get('remate_o_giro', '')}
+Cantidad total de escenas requeridas: {target_scenes} escenas.
+"""
+
     try:
-        if OpenAI is not None:
-            client = OpenAI(
-                base_url="https://openrouter.ai/api/v1",
-                api_key=api_key,
-            )
-            response = client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": system_instruction},
-                    {"role": "user", "content": user_prompt}
-                ],
-                temperature=0.7,
-                max_tokens=3500,
-                response_format={"type": "json_object"},
-                extra_body={"reasoning": {"effort": "low"}}
-            )
-            raw_content = response.choices[0].message.content
-        else:
-            headers = {
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-                "HTTP-Referer": "https://github.com/faceless-engine",
-                "X-Title": "Faceless Engine"
-            }
-            payload = {
-                "model": model,
-                "messages": [
-                    {"role": "system", "content": system_instruction},
-                    {"role": "user", "content": user_prompt}
-                ],
-                "temperature": 0.7,
-                "max_tokens": 3500,
-                "response_format": {"type": "json_object"},
-                "reasoning": {"effort": "low"}
-            }
-            res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload, timeout=45)
-            res.raise_for_status()
-            res_data = res.json()
-            raw_content = res_data["choices"][0]["message"]["content"]
-
-        clean_json_str = raw_content.strip()
-        if clean_json_str.startswith("```"):
-            clean_json_str = re.sub(r"^```[a-zA-Z]*\n?", "", clean_json_str)
-            clean_json_str = re.sub(r"\n?```$", "", clean_json_str).strip()
-
-        manifest_dict = json.loads(clean_json_str)
-
-        # Aplicar salvaguardas de fondo y detalles de personaje
-        manifest_dict["scenes"] = apply_prompt_safeguards(manifest_dict.get("scenes", []), aspect_ratio)
-
-        # Garantizar metadatos de formato
-        manifest_dict["video_type"] = video_type
-        manifest_dict["aspect_ratio"] = aspect_ratio
-        manifest_dict["target_duration_seconds"] = target_duration
-
-        return ScriptManifest.model_validate(manifest_dict)
-
+        raw_outline_json = call_openrouter_api(outline_system_prompt, outline_user_prompt, model, max_tokens=4096)
+        outline_data = json.loads(raw_outline_json)
     except Exception as e:
-        print(f"❌ Error al generar el guion vía OpenRouter: {e}")
-        if raw_content:
-            print(f"📄 Respuesta cruda:\n{raw_content}")
+        print(f"❌ Error al generar la Escaleta Maestra: {e}")
+        return None
+
+    master_outline = outline_data.get("master_outline", [])
+    if not master_outline:
+        print("❌ Error: La escaleta maestra regresó vacía.")
+        return None
+
+    # --------------------------------------------------------------------------
+    # FASE 2: GENERACIÓN DE ESCENAS DETALLADAS EN LOTES (BATCHES)
+    # --------------------------------------------------------------------------
+    all_scenes: List[Dict[str, Any]] = []
+
+    batch_system_prompt = f"""
+Eres un director de arte y guionista experto en videos educativos virales en formato monigotes 2D expresivos.
+Generas un subconjunto de escenas específicas manteniendo absoluta continuidad con las escenas previas y con la escaleta global.
+
+REGLAS ESTRICTAS DE CLASIFICACIÓN DE FONDO (bg_type):
+1. bg_type = 'environment': Para escenas narrativas, históricas, de acción o de entorno.
+2. bg_type = 'flat': ÚNICAMENTE para esquemas abstractos, tablas comparativas o diagramas técnicos.
+
+REGLAS OBLIGATORIAS DE ESTILO VISUAL Y PROMPTS ('visual_prompt'):
+Cada 'visual_prompt' individual DEBE estar escrito en INGLÉS y seguir ESTRICTAMENTE esta plantilla completa (NUNCA generes prompts cortos):
+
+"Expressive 2D comic book stick-figure illustration in hand-drawn ink line art with soft cell shading. Characters: Thin black stick limbs, round white head with black outline, simple black dot eyes, clear mouth facial expressions, detailed hairstyles, and simple textured outfits or clothing. [DESCRIPCIÓN DETALLADA DE LA ACCIÓN], vibrant saturated 2D cartoon vector background, [DETALLES DE COLOR Y FONDO], dramatic contrasting lighting, completely clean without any text, letters, or words unless explicit spanish labels are required, 16:9 horizontal widescreen ratio."
+
+Esquema JSON requerido para este lote:
+{{
+  "scenes": [
+    {{
+      "scene_number": 1,
+      "narration_text": "Texto exacto de locución en español...",
+      "bg_type": "environment",
+      "is_interactive_cta": false,
+      "visual_prompt": "Expressive 2D comic book stick-figure illustration..."
+    }}
+  ]
+}}
+"""
+
+    for start_scene in range(1, target_scenes + 1, batch_size):
+        end_scene = min(start_scene + batch_size - 1, target_scenes)
+        print(f"🎬 [Paso 2/2] Generando lote de escenas {start_scene} a {end_scene} (de {target_scenes})...")
+
+        previous_context = all_scenes[-2:] if all_scenes else []
+        current_batch_outline = [s for s in master_outline if start_scene <= s.get("scene_number", 0) <= end_scene]
+
+        batch_user_prompt = f"""
+OBJETIVO: Generar el JSON detallado para las escenas de la {start_scene} a la {end_scene}.
+
+ESCALETA MAESTRA PARA ESTE LOTE:
+{json.dumps(current_batch_outline, ensure_ascii=False, indent=2)}
+
+ÚLTIMAS ESCENAS GENERADAS PREVIAMENTE (Para dar continuidad a la locución y tono visual):
+{json.dumps(previous_context, ensure_ascii=False, indent=2)}
+
+Instrucciones: Devuelve el objeto JSON 'scenes' correspondiente EXCLUSIVAMENTE a las escenas del rango [{start_scene} - {end_scene}].
+"""
+
+        try:
+            raw_batch_json = call_openrouter_api(batch_system_prompt, batch_user_prompt, model, max_tokens=8192)
+            batch_data = json.loads(raw_batch_json)
+            batch_scenes = batch_data.get("scenes", [])
+            all_scenes.extend(batch_scenes)
+        except Exception as e:
+            print(f"❌ Error al procesar el lote {start_scene}-{end_scene}: {e}")
+            break
+
+    if not all_scenes:
+        print("❌ Error: No se pudo compilar ninguna escena.")
+        return None
+
+    # --------------------------------------------------------------------------
+    # FASE 3: ENSAMBLAJE FINAL Y VERIFICACIÓN
+    # --------------------------------------------------------------------------
+    scenes, th_prompt = apply_prompt_safeguards(
+        all_scenes, 
+        outline_data.get("thumbnail_prompt", ""), 
+        aspect_ratio
+    )
+
+    manifest_dict = {
+        "title": outline_data.get("title", idea.get("titulo", topic)),
+        "video_type": video_type,
+        "aspect_ratio": aspect_ratio,
+        "target_duration_seconds": target_duration,
+        "includes_interactive_cta": outline_data.get("includes_interactive_cta", True),
+        "thumbnail_prompt": th_prompt,
+        "thumbnail_text": outline_data.get("thumbnail_text", "¡ERROR FATAL!"),
+        "scenes": scenes
+    }
+
+    try:
+        return ScriptManifest.model_validate(manifest_dict)
+    except Exception as e:
+        print(f"❌ Error de validación en Pydantic al ensamblar el guion final: {e}")
         return None
 
 
@@ -326,6 +383,11 @@ def display_and_review_script(manifest: ScriptManifest) -> ScriptManifest:
         print(f" 🎬 Total Escenas: {len(data['scenes'])}")
         print("=" * 85)
 
+        print(f"\n 🖼️  METADATOS DE MINIATURA (THUMBNAIL):")
+        print(f"    💬 Texto Gancho (ES): \"{data.get('thumbnail_text', '')}\"")
+        print(f"    🎨 Visual Prompt (EN): {data.get('thumbnail_prompt', '')}")
+        print("-" * 85)
+
         for sc in data["scenes"]:
             tag_cta = " 💬 [PREGUNTA INTERACTIVA CON GLOBO]" if sc.get("is_interactive_cta") else ""
             print(f"\n🎬 ESCENA {sc['scene_number']}{tag_cta}:")
@@ -337,6 +399,7 @@ def display_and_review_script(manifest: ScriptManifest) -> ScriptManifest:
         print("👉 Presiona [ENTER] o '1' para APROBAR el guion.")
         print("👉 Escribe '2' para editar una escena específica.")
         print("👉 Escribe '3' para cambiar el título del video.")
+        print("👉 Escribe '4' para editar los metadatos de la miniatura (Texto / Prompt).")
 
         opt = input("\nSelección: ").strip()
 
@@ -369,6 +432,17 @@ def display_and_review_script(manifest: ScriptManifest) -> ScriptManifest:
             if new_title:
                 data["title"] = new_title
                 print(f"✔ Título actualizado a: '{new_title}'")
+        elif opt == "4":
+            print("\n--- Editando Metadatos de la Miniatura ---")
+            new_th_text = input(f"Nuevo texto de gancho ({data.get('thumbnail_text', '')}) [ENTER para mantener]: ").strip()
+            if new_th_text:
+                data["thumbnail_text"] = new_th_text.upper()
+
+            new_th_prompt = input("Nuevo visual prompt para la miniatura [ENTER para mantener]: ").strip()
+            if new_th_prompt:
+                data["thumbnail_prompt"] = new_th_prompt
+
+            print("✔ Metadatos de miniatura actualizados.")
 
     return ScriptManifest.model_validate(data)
 
@@ -378,7 +452,7 @@ def display_and_review_script(manifest: ScriptManifest) -> ScriptManifest:
 def generate_script(
     topic: Optional[str] = None,
     video_url: Optional[str] = None,
-    target_duration: int = 60,
+    target_duration: int = 600,
     video_type: str = "long",
     aspect_ratio: str = "16:9",
     model: str = "google/gemini-3.7-flash",
@@ -422,7 +496,6 @@ def generate_script(
     final_manifest = display_and_review_script(manifest)
     manifest_data = final_manifest.model_dump()
 
-    # Determinar el directorio de destino del proyecto
     if not project_dir:
         project_dir = create_project_structure(manifest_data["title"])
     else:
@@ -434,7 +507,6 @@ def generate_script(
     with open(manifest_path, "w", encoding="utf-8") as f:
         json.dump(manifest_data, f, indent=2, ensure_ascii=False)
 
-    # Actualizar estado global del proyecto activo
     os.makedirs("output", exist_ok=True)
     current_proj_path = os.path.join("output", "current_project.json")
     with open(current_proj_path, "w", encoding="utf-8") as f:
@@ -448,7 +520,7 @@ def generate_script(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generador de Guiones Faceless Engine")
-    parser.add_argument("--duration", type=int, default=60, help="Duración objetivo en segundos")
+    parser.add_argument("--duration", type=int, default=600, help="Duración objetivo en segundos")
     parser.add_argument("--type", type=str, default="long", choices=["short", "long"], help="Tipo de video")
     parser.add_argument("--ratio", type=str, default="16:9", choices=["9:16", "16:9"], help="Aspect Ratio")
     parser.add_argument("--model", type=str, default="google/gemini-3.7-flash", help="Modelo de OpenRouter")
