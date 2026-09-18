@@ -3,7 +3,7 @@ import re
 import json
 import argparse
 from datetime import datetime
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Literal
 from dotenv import load_dotenv
 import requests
 
@@ -17,28 +17,54 @@ from pydantic import BaseModel, Field
 load_dotenv()
 
 
-# --- CONSTANTES DE ESTILO VISUAL ---
+# --- CONSTANTES DE ESTILO VISUAL (FLUX.1 SCHNELL / FINANZAS) ---
 
 CHARACTER_STYLE = (
-    "Expressive 2D comic book stick-figure illustration in hand-drawn ink line art with soft cell shading. "
-    "Characters: Thin black stick limbs, round white head with black outline, simple black dot eyes, clear mouth facial expressions, "
-    "detailed hairstyles, and simple textured outfits or clothing."
+    "Clean 2D vector cartoon illustration, cell-shaded style. "
+    "Characters: Expressive 2D cartoon human figures with natural skin tones, "
+    "clear facial features, classic hairstyles, and simple textured clothing."
 )
 
-BG_FLAT = "Clean off-white minimalist flat background, high contrast, zero clutter, spacious layout for clear text readability, labels, and diagrams."
-BG_ENVIRONMENT = "Detailed painted environment background, warm earth tones, soft depth of field."
+BG_BASE_RULES = (
+    "spacious uncluttered composition, soft depth of field, "
+    "completely clean without any text, letters, or words"
+)
+
+PROMPT_SUFFIX = "16:9 horizontal widescreen ratio"
 
 
 # --- ESQUEMAS DE DATOS (PYDANTIC) ---
 
+class OverlayContent(BaseModel):
+    title: Optional[str] = Field(
+        default=None, 
+        description="Título o cifra principal en MAYÚSCULAS para superponer mediante Python."
+    )
+    bullets: Optional[List[str]] = Field(
+        default=None, 
+        description="Lista de 1 a 3 puntos clave o datos breves a superponer."
+    )
+
+
 class Scene(BaseModel):
     scene_number: int = Field(description="Número secuencial de la escena (1, 2, 3...)")
     narration_text: str = Field(description="Texto en español que dirá la voz en off para esta escena")
-    bg_type: str = Field(
-        default="environment", 
-        description="Tipo de fondo: 'flat' si la escena es EXCLUSIVAMENTE un diagrama/tabla/infografía; 'environment' para escenas narrativas, históricas o con paisajes."
+    layout_type: Literal["full_art", "split_right", "code_graphic"] = Field(
+        default="full_art",
+        description=(
+            "full_art: Imagen completa 100% IA sin texto.\n"
+            "split_right: Imagen IA encuadrada a la izquierda con 30% espacio negativo a la derecha para tarjeta de texto superpuesta por Python.\n"
+            "code_graphic: Sin imagen de IA. Gráfico o tabla de datos generado 100% por Python."
+        )
     )
-    visual_prompt: str = Field(description="Prompt visual ultradetallado en INGLÉS listo para generador de imágenes 2D")
+    visual_prompt: Optional[str] = Field(
+        default=None,
+        description="Prompt visual ultradetallado en INGLÉS listo para FLUX.1 (None si layout_type es 'code_graphic')"
+    )
+    overlay_content: Optional[OverlayContent] = Field(
+        default=None,
+        description="Contenido de texto o cifras a renderizar mediante Python si layout_type es 'split_right' o 'code_graphic'"
+    )
     is_interactive_cta: bool = Field(
         default=False,
         description="True únicamente si esta escena es una pregunta final condicional para generar interacción en los comentarios."
@@ -121,32 +147,38 @@ def load_reverse_analysis() -> Optional[Dict[str, Any]]:
 
 
 def apply_prompt_safeguards(scenes: List[Dict[str, Any]], thumbnail_prompt: str, aspect_ratio: str) -> tuple[List[Dict[str, Any]], str]:
-    """Garantiza la presencia del estilo base y el aspect ratio en todos los prompts."""
+    """Garantiza la presencia del estilo base, reglas de encuadre y aspect ratio sin duplicaciones."""
     ratio_directive = "16:9 horizontal widescreen ratio" if aspect_ratio == "16:9" else "9:16 vertical ratio"
 
     for scene in scenes:
-        prompt = scene.get("visual_prompt", "").strip()
-        bg_type = scene.get("bg_type", "environment").lower()
+        layout = scene.get("layout_type", "full_art")
 
-        if "Expressive 2D comic" not in prompt:
+        if layout == "code_graphic":
+            scene["visual_prompt"] = None
+            continue
+
+        prompt = (scene.get("visual_prompt") or "").strip()
+
+        if "Clean 2D vector cartoon" not in prompt:
             prompt = f"{CHARACTER_STYLE} {prompt}"
 
-        if bg_type == "flat":
-            if "flat background" not in prompt.lower():
-                prompt += f". {BG_FLAT}"
-        else:
-            if "environment" not in prompt.lower() and "background" not in prompt.lower():
-                prompt += f". {BG_ENVIRONMENT}"
+        if layout == "split_right":
+            if "left 70%" not in prompt.lower():
+                prompt += ". Subject and main action framed strictly on the left 70% of the image, the right 30% of the frame is an empty neutral wall or clean blurred background with empty negative space."
 
-        if ratio_directive not in prompt:
+        if "completely clean" not in prompt.lower() and "uncluttered" not in prompt.lower():
+            prompt += f", {BG_BASE_RULES}"
+
+        if ratio_directive.lower() not in prompt.lower():
             prompt += f", {ratio_directive}."
 
         scene["visual_prompt"] = prompt
 
     th_prompt = thumbnail_prompt.strip()
-    if "Expressive 2D comic" not in th_prompt:
+    if "Clean 2D vector cartoon" not in th_prompt:
         th_prompt = f"{CHARACTER_STYLE} {th_prompt}"
-    if ratio_directive not in th_prompt:
+
+    if ratio_directive.lower() not in th_prompt.lower():
         th_prompt += f", {ratio_directive}."
 
     return scenes, th_prompt
@@ -172,7 +204,7 @@ def call_openrouter_api(system_instruction: str, user_prompt: str, model: str, m
                 {"role": "system", "content": system_instruction},
                 {"role": "user", "content": user_prompt}
             ],
-            temperature=0.7,
+            temperature=0.2,
             max_tokens=max_tokens,
             response_format={"type": "json_object"},
             extra_body={"reasoning": {"effort": "low"}}
@@ -191,7 +223,7 @@ def call_openrouter_api(system_instruction: str, user_prompt: str, model: str, m
                 {"role": "system", "content": system_instruction},
                 {"role": "user", "content": user_prompt}
             ],
-            "temperature": 0.7,
+            "temperature": 0.2,
             "max_tokens": max_tokens,
             "response_format": {"type": "json_object"},
             "reasoning": {"effort": "low"}
@@ -233,14 +265,14 @@ def generate_script_from_openrouter(
     print("📋 [Paso 1/2] Generando la Escaleta Maestra del video...")
 
     outline_system_prompt = f"""
-Eres un director de arte y guionista experto en videos virales educativos.
+Eres un director de arte y guionista experto en videos educativos virales de economía y finanzas.
 Tu tarea es definir la ESTRUCTURA GLOBAL y la MINIATURA de un video de {target_duration} segundos.
 Debes proyectar exactamente {target_scenes} escenas continuas.
 
 REGLAS DE MINIATURA (THUMBNAIL):
 1. STRICT NO-TEXT RULE IN RAW IMAGE: The thumbnail_prompt raw image MUST be 100% clean of typography.
-2. VIBRANT CARTOON COLOR PALETTE: Saturated 2D cartoon vector style, high-contrast split backgrounds.
-3. TIGHT COMPOSITION: Medium close-up shot, characters fill 80% frame near center.
+2. CLEAN 2D VECTOR CARTOON STYLE: Saturated cell-shaded 2D style, high-contrast split backgrounds.
+3. TIGHT COMPOSITION: Medium close-up shot, key characters fill 80% frame near center.
 4. thumbnail_prompt: Prompt ultradetallado en INGLÉS.
 5. thumbnail_text: Texto de gancho en MAYÚSCULAS en español (2-3 palabras máximo) o "" si no aplica.
 
@@ -285,17 +317,22 @@ Cantidad total de escenas requeridas: {target_scenes} escenas.
     all_scenes: List[Dict[str, Any]] = []
 
     batch_system_prompt = f"""
-Eres un director de arte y guionista experto en videos educativos virales en formato monigotes 2D expresivos.
-Generas un subconjunto de escenas específicas manteniendo absoluta continuidad con las escenas previas y con la escaleta global.
+Eres un director de arte y guionista experto en videos educativos de economía y finanzas en estilo animación 2D vectorial limpia (cell-shaded).
+Generas un subconjunto de escenas específicas manteniendo absoluta continuidad narrativa con las escenas previas.
 
-REGLAS ESTRICTAS DE CLASIFICACIÓN DE FONDO (bg_type):
-1. bg_type = 'environment': Para escenas narrativas, históricas, de acción o de entorno.
-2. bg_type = 'flat': ÚNICAMENTE para esquemas abstractos, tablas comparativas o diagramas técnicos.
+REGLAS ESTRICTAS DE LAYOUT (layout_type):
+1. layout_type = 'full_art' (DEFAULT): Para la mayoría de las escenas narrativas o conceptuales. Ocupa el 100% de la pantalla sin texto.
+2. layout_type = 'split_right': Cuando se expliquen 2-3 puntos clave o cifras importantes que requieran apoyo visual escrito. La IA generará la imagen dejando el 30% derecho libre para una tarjeta de texto superpuesta por Python.
+3. layout_type = 'code_graphic': ÚNICAMENTE para tablas comparativas complejas, gráficos de barras o cifras gigantes. La imagen NO se pide a la IA (visual_prompt = null), sino que se dibuja 100% por código en Python.
 
-REGLAS OBLIGATORIAS DE ESTILO VISUAL Y PROMPTS ('visual_prompt'):
-Cada 'visual_prompt' individual DEBE estar escrito en INGLÉS y seguir ESTRICTAMENTE esta plantilla completa (NUNCA generes prompts cortos):
+REGLAS DE CONTENIDO SUPERPUESTO (overlay_content):
+- Si layout_type es 'split_right' o 'code_graphic', DEBES completar 'overlay_content' con 'title' (MAYÚSCULAS) y/o 'bullets' (lista de 1 a 3 ítems breves).
+- Si layout_type es 'full_art', 'overlay_content' debe ser null.
 
-"Expressive 2D comic book stick-figure illustration in hand-drawn ink line art with soft cell shading. Characters: Thin black stick limbs, round white head with black outline, simple black dot eyes, clear mouth facial expressions, detailed hairstyles, and simple textured outfits or clothing. [DESCRIPCIÓN DETALLADA DE LA ACCIÓN], vibrant saturated 2D cartoon vector background, [DETALLES DE COLOR Y FONDO], dramatic contrasting lighting, completely clean without any text, letters, or words unless explicit spanish labels are required, 16:9 horizontal widescreen ratio."
+REGLAS DE PROMPT VISUAL ('visual_prompt'):
+Si layout_type NO es 'code_graphic', 'visual_prompt' DEBE estar escrito en INGLÉS y seguir la siguiente plantilla base:
+
+"Clean 2D vector cartoon illustration, cell-shaded style. Characters: Expressive 2D cartoon human figures with natural skin tones, clear facial features, classic hairstyles, and simple textured clothing. [DESCRIPCIÓN DE LA ACCIÓN Y ENTORNO], spacious uncluttered composition, soft depth of field, completely clean without any text, letters, or words, 16:9 horizontal widescreen ratio."
 
 Esquema JSON requerido para este lote:
 {{
@@ -303,9 +340,21 @@ Esquema JSON requerido para este lote:
     {{
       "scene_number": 1,
       "narration_text": "Texto exacto de locución en español...",
-      "bg_type": "environment",
-      "is_interactive_cta": false,
-      "visual_prompt": "Expressive 2D comic book stick-figure illustration..."
+      "layout_type": "full_art",
+      "visual_prompt": "Clean 2D vector cartoon illustration...",
+      "overlay_content": null,
+      "is_interactive_cta": false
+    }},
+    {{
+      "scene_number": 2,
+      "narration_text": "Texto explicativo...",
+      "layout_type": "split_right",
+      "visual_prompt": "Clean 2D vector cartoon illustration...",
+      "overlay_content": {{
+        "title": "FACTORES CLAVE",
+        "bullets": ["Tasa de interés", "Inflación anual"]
+      }},
+      "is_interactive_cta": false
     }}
   ]
 }}
@@ -324,7 +373,7 @@ OBJETIVO: Generar el JSON detallado para las escenas de la {start_scene} a la {e
 ESCALETA MAESTRA PARA ESTE LOTE:
 {json.dumps(current_batch_outline, ensure_ascii=False, indent=2)}
 
-ÚLTIMAS ESCENAS GENERADAS PREVIAMENTE (Para dar continuidad a la locución y tono visual):
+ÚLTIMAS ESCENAS GENERADAS PREVIAMENTE (Para continuidad):
 {json.dumps(previous_context, ensure_ascii=False, indent=2)}
 
 Instrucciones: Devuelve el objeto JSON 'scenes' correspondiente EXCLUSIVAMENTE a las escenas del rango [{start_scene} - {end_scene}].
@@ -390,9 +439,21 @@ def display_and_review_script(manifest: ScriptManifest) -> ScriptManifest:
 
         for sc in data["scenes"]:
             tag_cta = " 💬 [PREGUNTA INTERACTIVA CON GLOBO]" if sc.get("is_interactive_cta") else ""
-            print(f"\n🎬 ESCENA {sc['scene_number']}{tag_cta}:")
+            layout = sc.get("layout_type", "full_art").upper()
+            print(f"\n🎬 ESCENA {sc['scene_number']} [{layout}]{tag_cta}:")
             print(f"   🗣️  Locución (ES): \"{sc['narration_text']}\"")
-            print(f"   🖼️  Visual Prompt (EN): {sc['visual_prompt']}")
+
+            if sc.get("layout_type") == "code_graphic":
+                print("   🖼️  Visual Prompt: [GRÁFICO GENERADO 100% POR CÓDIGO PYTHON]")
+            else:
+                print(f"   🖼️  Visual Prompt (EN): {sc.get('visual_prompt', '')}")
+
+            if sc.get("overlay_content"):
+                ov = sc["overlay_content"]
+                if ov.get("title"):
+                    print(f"   📝 Texto Overlay Título: \"{ov['title']}\"")
+                if ov.get("bullets"):
+                    print(f"   📝 Texto Overlay Bullets: {ov['bullets']}")
 
         print("\n" + "=" * 85)
         print("🛑 REVISIÓN E INTERVENCIÓN HUMANA:")
@@ -418,9 +479,10 @@ def display_and_review_script(manifest: ScriptManifest) -> ScriptManifest:
                     if new_narr:
                         target_sc["narration_text"] = new_narr
 
-                    new_vis = input("Nuevo prompt visual [ENTER para mantener]: ").strip()
-                    if new_vis:
-                        target_sc["visual_prompt"] = new_vis
+                    if target_sc.get("layout_type") != "code_graphic":
+                        new_vis = input("Nuevo prompt visual [ENTER para mantener]: ").strip()
+                        if new_vis:
+                            target_sc["visual_prompt"] = new_vis
 
                     print(f"✔ Escena {target_sc['scene_number']} actualizada.")
                 else:
@@ -492,7 +554,6 @@ def generate_script(
     if not manifest:
         raise RuntimeError("No se pudo generar el guion con OpenRouter.")
 
-    # Intervención humana
     final_manifest = display_and_review_script(manifest)
     manifest_data = final_manifest.model_dump()
 

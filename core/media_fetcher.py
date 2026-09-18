@@ -4,10 +4,11 @@ import json
 import time
 import base64
 import argparse
+import textwrap
 import requests
 from typing import Optional, Dict, Any, List
 from dotenv import load_dotenv
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
 from core.config import get_language_directive
 
@@ -22,11 +23,11 @@ except ImportError:
 # ==============================================================================
 # CONFIGURACIÓN GENERAL Y PROVEEDOR POR DEFECTO
 # ==============================================================================
-DEFAULT_IMAGE_PROVIDER = "openrouter"
+DEFAULT_IMAGE_PROVIDER = "fal"
 
 DEFAULT_MODELS = {
     "openrouter": "qwen/qwen-image-3",
-    "fal": "fal-ai/qwen-image-2512"
+    "fal": "fal-ai/flux-1/schnell"
 }
 # ==============================================================================
 
@@ -73,6 +74,151 @@ def get_current_project_dir() -> str:
         "No se especificó --project_dir y no se encontró un proyecto válido en 'output/current_project.json'."
     )
 
+def wrap_text_by_pixel_width(text: str, font: ImageFont.FreeTypeFont, max_width_px: int) -> List[str]:
+    """
+    Enuelve el texto midiendo el ancho real en píxeles de cada línea usando la fuente dada.
+    """
+    words = text.split()
+    if not words:
+        return []
+
+    lines = []
+    current_line = []
+
+    for word in words:
+        test_line = " ".join(current_line + [word])
+        try:
+            bbox = font.getbbox(test_line)
+            line_width = bbox[2] - bbox[0]
+        except AttributeError:
+            line_width = len(test_line) * (font.size * 0.65)
+
+        if line_width <= max_width_px:
+            current_line.append(word)
+        else:
+            if current_line:
+                lines.append(" ".join(current_line))
+                current_line = [word]
+            else:
+                # Si una sola palabra es más ancha que la tarjeta, la fuerza a entrar
+                lines.append(word)
+                current_line = []
+
+    if current_line:
+        lines.append(" ".join(current_line))
+
+    return lines
+
+def apply_split_right_overlay(image_path: str, overlay_content: Dict[str, Any]) -> None:
+    if not overlay_content or not os.path.exists(image_path):
+        return
+
+    title = overlay_content.get("title")
+    bullets = overlay_content.get("bullets", [])
+
+    if not title and not bullets:
+        return
+
+    try:
+        with Image.open(image_path) as base_img:
+            img = base_img.convert("RGBA")
+            width, height = img.size
+
+            card_left = int(width * 0.67)
+            card_top = int(height * 0.10)
+            card_right = int(width * 0.97)
+            card_bottom = int(height * 0.90)
+
+            card_overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+            draw_card = ImageDraw.Draw(card_overlay)
+
+            draw_card.rounded_rectangle(
+                [card_left, card_top, card_right, card_bottom],
+                radius=18,
+                fill=(15, 23, 42, 225),
+                outline=(51, 65, 85, 255),
+                width=3
+            )
+
+            img = Image.alpha_composite(img, card_overlay)
+            draw = ImageDraw.Draw(img)
+
+            font_size_title = max(24, int(height * 0.045))
+            font_size_bullets = max(18, int(height * 0.032))
+
+            try:
+                title_font = ImageFont.truetype("DejaVuSans-Bold.ttf", font_size_title)
+                bullet_font = ImageFont.truetype("DejaVuSans.ttf", font_size_bullets)
+            except IOError:
+                try:
+                    title_font = ImageFont.truetype("arial.ttf", font_size_title)
+                    bullet_font = ImageFont.truetype("arial.ttf", font_size_bullets)
+                except IOError:
+                    title_font = ImageFont.load_default()
+                    bullet_font = ImageFont.load_default()
+
+            padding_x = int(width * 0.02)
+            padding_y = int(height * 0.04)
+            curr_y = card_top + padding_y
+
+            # Calcular el ancho máximo disponible en píxeles dentro de la tarjeta
+            max_text_width_px = (card_right - card_left) - (padding_x * 2)
+
+            # 1. RENDERIZAR TÍTULO CON MEDICIÓN DE PÍXELES
+            if title:
+                # Ajuste automático del tamaño de fuente si una sola palabra no cabe
+                for word in title.split():
+                    try:
+                        w = title_font.getbbox(word.upper())[2] - title_font.getbbox(word.upper())[0]
+                    except AttributeError:
+                        w = len(word) * (font_size_title * 0.65)
+                    
+                    if w > max_text_width_px:
+                        # Reducir dinámicamente la fuente si hay palabras gigantes
+                        font_size_title = int(font_size_title * (max_text_width_px / w) * 0.9)
+                        title_font = ImageFont.truetype("DejaVuSans-Bold.ttf", font_size_title)
+
+                wrapped_title = wrap_text_by_pixel_width(title.upper(), title_font, max_text_width_px)
+                
+                for line in wrapped_title:
+                    draw.text(
+                        (card_left + padding_x, curr_y),
+                        line,
+                        font=title_font,
+                        fill=(250, 204, 21)
+                    )
+                    curr_y += int(font_size_title * 1.3)
+
+                curr_y += int(height * 0.015)
+                draw.line(
+                    [(card_left + padding_x, curr_y), (card_right - padding_x, curr_y)],
+                    fill=(71, 85, 105, 255),
+                    width=3
+                )
+                curr_y += int(height * 0.04)
+
+            # 2. RENDERIZAR BULLETS CON MEDICIÓN DE PÍXELES
+            if bullets:
+                for bullet in bullets:
+                    bullet_text = f"• {bullet}"
+                    wrapped_bullet = wrap_text_by_pixel_width(bullet_text, bullet_font, max_text_width_px)
+                    for idx, line in enumerate(wrapped_bullet):
+                        indent = padding_x if idx == 0 else padding_x + 18
+                        draw.text(
+                            (card_left + indent, curr_y),
+                            line,
+                            font=bullet_font,
+                            fill=(241, 245, 249)
+                        )
+                        curr_y += int(font_size_bullets * 1.35)
+                    curr_y += int(height * 0.025)
+
+            final_img = img.convert("RGB")
+            final_img.save(image_path, quality=95)
+            print(f"   🎨 Overlay 'split_right' adaptado en píxeles: {image_path}")
+
+    except Exception as e:
+        print(f"   ⚠️ Error al estampar overlay en '{image_path}': {e}")
 
 def create_fallback_image(output_path: str, scene_num: int, text: str, aspect_ratio: str = "16:9"):
     """Crea una imagen local usando Pillow como respaldo infalible respetando la relación de aspecto."""
@@ -104,10 +250,7 @@ def generate_image_via_openrouter(
     retry_delay: float = 3.0,
     request_timeout: int = 120
 ) -> bool:
-    """
-    Genera una imagen utilizando la API de OpenRouter aumentando el timeout a 120s
-    para evitar cierres de conexión prematuros.
-    """
+    """Genera una imagen utilizando la API de OpenRouter."""
     api_key = os.getenv("OPENROUTER_API_KEY")
     if not api_key:
         print("   ❌ Error: OPENROUTER_API_KEY no encontrada en .env")
@@ -128,7 +271,6 @@ def generate_image_via_openrouter(
 
     for attempt in range(1, max_retries + 1):
         try:
-            # 1. Intentar endpoint /images/generations con timeout extendido
             url_img = "https://openrouter.ai/api/v1/images/generations"
             payload_img = {
                 "model": model,
@@ -155,7 +297,6 @@ def generate_image_via_openrouter(
                             f.write(base64.b64decode(b64_data))
                         return True
 
-            # 2. Fallback: Intentar /chat/completions si el primer endpoint devuelve error no fatal
             url_chat = "https://openrouter.ai/api/v1/chat/completions"
             payload_chat = {
                 "model": model,
@@ -192,7 +333,7 @@ def generate_image_via_openrouter(
                 print(f"   ⚠️ OpenRouter status: {res.status_code} / chat status: {res_chat.status_code}")
 
         except requests.exceptions.Timeout:
-            print(f"   ⏳ Timeout ({request_timeout}s alcanzado). El modelo tardó demasiado. Reintentando ({attempt}/{max_retries})...")
+            print(f"   ⏳ Timeout ({request_timeout}s alcanzado). Reintentando ({attempt}/{max_retries})...")
         except Exception as e:
             print(f"   ⚠️ Fallo en llamada OpenRouter (Intento {attempt}/{max_retries}): {e}")
 
@@ -206,15 +347,12 @@ def generate_image_via_openrouter(
 def generate_image_via_fal(
     prompt: str,
     output_path: str,
-    model: str = "fal-ai/qwen-image-2512",
+    model: str = "fal-ai/flux-1/schnell",
     aspect_ratio: str = "16:9",
     max_retries: int = 3,
     retry_delay: float = 3.0
 ) -> bool:
-    """
-    Solicita la generación de imagen a fal.ai.
-    Maneja reintentos con backoff exponencial.
-    """
+    """Solicita la generación de imagen a fal.ai."""
     fal_key = os.getenv("FAL_KEY") or os.getenv("FAL_API_KEY")
     if not fal_key:
         print("   ❌ Error: FAL_KEY o FAL_API_KEY no encontrada en .env")
@@ -277,8 +415,6 @@ def generate_image_via_fal(
                     time.sleep(current_delay)
                     current_delay *= 1.5
                     continue
-                else:
-                    print(f"   ⚠️ fal.ai respondió con status {res.status_code}: {res.text[:200]}")
 
         except Exception as e:
             print(f"   ⚠️ Fallo en llamada API (Intento {attempt}/{max_retries}): {e}")
@@ -313,7 +449,7 @@ def process_thumbnail(
     max_retries: int = 3,
     force: bool = False
 ) -> bool:
-    """Procesa la imagen cruda de la miniatura (thumbnail_raw.jpg) a partir del manifest."""
+    """Procesa la imagen cruda de la miniatura (thumbnail_raw.jpg)."""
     thumbnail_prompt = manifest.get("thumbnail_prompt")
     if not thumbnail_prompt:
         print("⚠️ 'thumbnail_prompt' no encontrado en manifest.json. Omitiendo miniatura.")
@@ -357,6 +493,151 @@ def process_thumbnail(
     manifest["thumbnail_raw_path"] = output_path
     return True
 
+def render_code_graphic_card(
+    output_path: str,
+    scene_num: int,
+    overlay_content: Optional[Dict[str, Any]],
+    aspect_ratio: str = "16:9"
+) -> None:
+    """
+    Renderiza una tarjeta visual de texto/código (layout 'code_graphic')
+    con tipografía de gran tamaño y contenido centrado vertical y horizontalmente.
+    """
+    if aspect_ratio == "9:16":
+        width, height = 1080, 1920
+        max_title_chars = 18
+        max_bullet_chars = 22
+        font_size_title = max(38, int(height * 0.048))
+        font_size_bullets = max(28, int(height * 0.034))
+    else:
+        width, height = 1920, 1080
+        max_title_chars = 28
+        max_bullet_chars = 36
+        font_size_title = max(56, int(height * 0.065))   # ~70px en 1080p
+        font_size_bullets = max(40, int(height * 0.045)) # ~48px en 1080p
+
+    img = Image.new('RGB', (width, height), color=(15, 23, 42))
+    draw = ImageDraw.Draw(img)
+
+    # Margen del contenedor central
+    card_left = int(width * 0.08)
+    card_top = int(height * 0.10)
+    card_right = int(width * 0.92)
+    card_bottom = int(height * 0.90)
+
+    # Ventana central Slate
+    draw.rounded_rectangle(
+        [card_left, card_top, card_right, card_bottom],
+        radius=24,
+        fill=(30, 41, 59),
+        outline=(51, 65, 85),
+        width=3
+    )
+
+    # Puntos decorativos estilo ventana / terminal (Top-Left)
+    dot_y = card_top + int(height * 0.04)
+    dot_x_start = card_left + int(width * 0.03)
+    dot_radius = max(6, int(height * 0.009))
+    for i, color in enumerate([(239, 68, 68), (245, 158, 11), (34, 197, 94)]):
+        cx = dot_x_start + (i * dot_radius * 3.5)
+        draw.ellipse([cx - dot_radius, dot_y - dot_radius, cx + dot_radius, dot_y + dot_radius], fill=color)
+
+    # Carga de fuentes
+    try:
+        title_font = ImageFont.truetype("DejaVuSans-Bold.ttf", font_size_title)
+        bullet_font = ImageFont.truetype("DejaVuSans.ttf", font_size_bullets)
+    except IOError:
+        try:
+            title_font = ImageFont.truetype("arial.ttf", font_size_title)
+            bullet_font = ImageFont.truetype("arial.ttf", font_size_bullets)
+        except IOError:
+            title_font = ImageFont.load_default()
+            bullet_font = ImageFont.load_default()
+
+    title = overlay_content.get("title") if overlay_content else f"ESCENA {scene_num}"
+    bullets = overlay_content.get("bullets", []) if overlay_content else []
+
+    # Preparar texto envuelto
+    wrapped_title_lines = textwrap.wrap(title.upper(), width=max_title_chars) if title else []
+    
+    wrapped_bullet_items = []
+    if bullets:
+        for b in bullets:
+            wrapped_bullet_items.append(textwrap.wrap(f"• {b}", width=max_bullet_chars))
+
+    # --- CÁLCULO DE ALTURA TOTAL PARA CENTRADO VERTICAL ---
+    line_h_title = int(font_size_title * 1.35)
+    line_h_bullet = int(font_size_bullets * 1.45)
+    sep_space = int(height * 0.04)
+
+    total_h = 0
+    if wrapped_title_lines:
+        total_h += (len(wrapped_title_lines) * line_h_title) + sep_space
+
+    for item_lines in wrapped_bullet_items:
+        total_h += (len(item_lines) * line_h_bullet) + int(height * 0.02)
+
+    header_dots_h = int(height * 0.06)
+    content_area_top = card_top + header_dots_h
+    content_area_h = card_bottom - content_area_top
+
+    # Punto Y inicial centrado
+    curr_y = content_area_top + max(20, (content_area_h - total_h) // 2)
+    center_x = (card_left + card_right) // 2
+
+    # 1. RENDERIZAR TÍTULO (Centrado)
+    if wrapped_title_lines:
+        for line in wrapped_title_lines:
+            draw.text(
+                (center_x, curr_y + (line_h_title // 2)),
+                line,
+                font=title_font,
+                fill=(250, 204, 21),
+                anchor="mm"
+            )
+            curr_y += line_h_title
+
+        # Línea separadora centrada (70% del ancho interno)
+        curr_y += int(sep_space * 0.2)
+        sep_w = int((card_right - card_left) * 0.7)
+        draw.line(
+            [(center_x - (sep_w // 2), curr_y), (center_x + (sep_w // 2), curr_y)],
+            fill=(71, 85, 105),
+            width=3
+        )
+        curr_y += int(sep_space * 0.8)
+
+    # 2. RENDERIZAR BULLETS (Bloque centrado en la pantalla)
+    if wrapped_bullet_items:
+        max_line_len_px = 0
+        for item_lines in wrapped_bullet_items:
+            for line in item_lines:
+                try:
+                    bbox = bullet_font.getbbox(line)
+                    w = bbox[2] - bbox[0]
+                except AttributeError:
+                    w = len(line) * (font_size_bullets * 0.55)
+                if w > max_line_len_px:
+                    max_line_len_px = w
+
+        # X de inicio para que el bloque completo quede centrado
+        bullet_block_left = max(card_left + 40, int(center_x - (max_line_len_px / 2)))
+
+        for item_lines in wrapped_bullet_items:
+            for idx, line in enumerate(item_lines):
+                indent = 0 if idx == 0 else int(font_size_bullets * 0.8)
+                draw.text(
+                    (bullet_block_left + indent, curr_y),
+                    line,
+                    font=bullet_font,
+                    fill=(241, 245, 249)
+                )
+                curr_y += line_h_bullet
+            curr_y += int(height * 0.02)
+
+    fmt = "PNG" if output_path.lower().endswith(".png") else "JPEG"
+    img.save(output_path, fmt, quality=95)
+    print(f"   🎨 Tarjeta 'code_graphic' centrada y ampliada: {output_path}")
 
 def process_scene_media(
     project_dir: str,
@@ -368,10 +649,7 @@ def process_scene_media(
     force: bool = False,
     rate_limit_delay: float = 1.0
 ):
-    """
-    Procesa escenas y/o miniatura del manifest.json seleccionando el proveedor ('openrouter' o 'fal').
-    Soporta procesamiento exclusivo de la miniatura (--only-thumbnail).
-    """
+    """Procesa escenas y/o miniatura del manifest.json aplicando overlays de texto según el layout."""
     provider_key = provider.lower().strip()
     if provider_key not in ["openrouter", "fal"]:
         print(f"⚠️ Proveedor '{provider}' no válido. Usando '{DEFAULT_IMAGE_PROVIDER}'.")
@@ -402,7 +680,6 @@ def process_scene_media(
         print(" 🔄 Modo FORCED activado: Re-generando imágenes seleccionadas.")
     print("=" * 80)
 
-    # Si se solicitó únicamente la miniatura
     if only_thumbnail:
         process_thumbnail(project_dir, manifest, provider_key, selected_model, aspect_ratio, max_retries, force)
         with open(manifest_path, "w", encoding="utf-8") as f:
@@ -410,7 +687,6 @@ def process_scene_media(
         print("\n✔ Procesamiento de miniatura finalizado.")
         return
 
-    # Procesamiento de Escenas
     all_scenes = manifest.get("scenes", [])
     if not all_scenes:
         print("⚠️ No hay escenas en manifest.json")
@@ -419,7 +695,7 @@ def process_scene_media(
     if target_scenes:
         scenes_to_process = [s for s in all_scenes if s.get("scene_number") in target_scenes]
         if not scenes_to_process:
-            print(f"❌ Ninguna de las escenas solicitadas ({target_scenes}) existe en el manifest. (Total escenas: {len(all_scenes)})")
+            print(f"❌ Ninguna de las escenas solicitadas ({target_scenes}) existe en el manifest.")
             return
     else:
         scenes_to_process = all_scenes
@@ -429,52 +705,63 @@ def process_scene_media(
 
     for scene in scenes_to_process:
         idx = scene.get("scene_number", 1)
-        visual_prompt = scene.get("visual_prompt", "minimalist 2D vector stick figure cartoon")
+        layout_type = scene.get("layout_type", "full_art")
+        visual_prompt = scene.get("visual_prompt") or "minimalist 2D vector graphic"
         narration = scene.get("narration_text", "")
+        overlay_content = scene.get("overlay_content")
         image_filename = f"scene_{idx}.jpg"
         image_path = os.path.join(images_dir, image_filename)
 
+        # Checkpoint: Si la imagen existe y es válida, verificamos si requiere estampado de overlay antes de omitir
         if not force and is_valid_image_file(image_path):
-            print(f"\n⏭️ Escena {idx}: Imagen ya existe y es válida ('{image_filename}'). Omitiendo por Checkpoint.")
+            if layout_type == "split_right" and overlay_content:
+                apply_split_right_overlay(image_path, overlay_content)
+            print(f"\n⏭️ Escena {idx}: Imagen lista ('{image_filename}'). Omitiendo por Checkpoint.")
             scene["image_path"] = image_path
             skipped_count += 1
             continue
 
-        print(f"\n🖼️ Procesando Escena {idx}...")
-        print(f"   Prompt: \"{visual_prompt[:90]}...\"")
+        print(f"\n🖼️ Procesando Escena {idx} [{layout_type.upper()}]...")
 
-        if provider_key == "openrouter":
-            success = generate_image_via_openrouter(
-                prompt=visual_prompt,
-                output_path=image_path,
-                model=selected_model,
-                aspect_ratio=aspect_ratio,
-                max_retries=max_retries
-            )
+        if layout_type == "code_graphic":
+            print("   📊 Escena tipo 'code_graphic'. Generando tarjeta de texto...")
+            render_code_graphic_card(image_path, idx, overlay_content, aspect_ratio=aspect_ratio)
+            success = True
         else:
-            success = generate_image_via_fal(
-                prompt=visual_prompt,
-                output_path=image_path,
-                model=selected_model,
-                aspect_ratio=aspect_ratio,
-                max_retries=max_retries
-            )
+            print(f"   Prompt: \"{visual_prompt[:90]}...\"")
+            if provider_key == "openrouter":
+                success = generate_image_via_openrouter(
+                    prompt=visual_prompt,
+                    output_path=image_path,
+                    model=selected_model,
+                    aspect_ratio=aspect_ratio,
+                    max_retries=max_retries
+                )
+            else:
+                success = generate_image_via_fal(
+                    prompt=visual_prompt,
+                    output_path=image_path,
+                    model=selected_model,
+                    aspect_ratio=aspect_ratio,
+                    max_retries=max_retries
+                )
 
         if success:
-            print(f"   ✔ Imagen generada con éxito ({provider_key.upper()}): {image_path}")
-            processed_count += 1
+            print(f"   ✔ Imagen base generada ({provider_key.upper()}): {image_path}")
         else:
-            print("   ⚠️ Falló la generación en línea tras reintentos. Generando respaldo local (Pillow)...")
+            print("   ⚠️ Falló la generación en línea. Generando respaldo local (Pillow)...")
             create_fallback_image(image_path, idx, narration, aspect_ratio=aspect_ratio)
-            print(f"   ✔ Respaldo guardado en: {image_path}")
-            processed_count += 1
+
+        # Estampar la tarjeta overlay si la escena es split_right
+        if layout_type == "split_right" and overlay_content:
+            apply_split_right_overlay(image_path, overlay_content)
 
         scene["image_path"] = image_path
+        processed_count += 1
 
         if rate_limit_delay > 0 and (processed_count < len(scenes_to_process)):
             time.sleep(rate_limit_delay)
 
-    # Generar la miniatura cruda al finalizar el lote si no se especificaron escenas individuales
     if not target_scenes:
         process_thumbnail(project_dir, manifest, provider_key, selected_model, aspect_ratio, max_retries, force)
 
@@ -491,11 +778,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Módulo Visual para Faceless Engine")
     parser.add_argument("--project_dir", type=str, default=None, help="Directorio del proyecto")
     parser.add_argument("--provider", type=str, default=DEFAULT_IMAGE_PROVIDER, choices=["openrouter", "fal"], help="Proveedor de imágenes")
-    parser.add_argument("--model", type=str, default=None, help="Modelo específico (omita para usar el predeterminado del proveedor)")
+    parser.add_argument("--model", type=str, default=None, help="Modelo específico")
     parser.add_argument("--retries", type=int, default=3, help="Reintentos por escena")
-    parser.add_argument("--scene", type=str, default=None, help="Escena(s) a regenerar (ej: '3', '1-10', '1,3,5' o '1-3,5,8-10')")
-    parser.add_argument("--only-thumbnail", action="store_true", help="Genera ÚNICAMENTE la imagen de la miniatura (thumbnail_raw.jpg)")
-    parser.add_argument("--force", action="store_true", help="Ignora el checkpoint y fuerza la regeneración")
+    parser.add_argument("--scene", type=str, default=None, help="Escenas a regenerar")
+    parser.add_argument("--only-thumbnail", action="store_true", help="Genera ÚNICAMENTE la miniatura")
+    parser.add_argument("--force", action="store_true", help="Fuerza la regeneración")
     parser.add_argument("--delay", type=float, default=1.0, help="Pausa en segundos entre peticiones API")
 
     args = parser.parse_args()
