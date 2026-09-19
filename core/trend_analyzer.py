@@ -14,8 +14,15 @@ except ImportError:
 
 from googleapiclient.discovery import build
 from pydantic import BaseModel, Field
+from core.config import TARGET_LANGUAGE
 
 load_dotenv()
+
+LANGUAGE_NAMES = {
+    "es": "SPANISH",
+    "en": "ENGLISH",
+    "pt": "PORTUGUESE"
+}
 
 
 class TrendVideo(BaseModel):
@@ -83,11 +90,12 @@ def get_video_details(video_id: str) -> Optional[Dict[str, Any]]:
 def analyze_video_reverse_prompting(
     video_url: str,
     title: Optional[str] = None,
-    model: str = "google/gemini-3.7-flash"
+    model: str = "google/gemini-3.7-flash",
+    language: str = TARGET_LANGUAGE
 ) -> Optional[Dict[str, Any]]:
     """
     Realiza Ingeniería Inversa (Reverse Prompting) sobre un video de YouTube
-    usando la API de Gemini vía OpenRouter con margen seguro de tokens.
+    usando la API de Gemini vía OpenRouter con margen seguro de tokens y en el idioma objetivo.
     """
     api_key = os.getenv("OPENROUTER_API_KEY")
     if not api_key:
@@ -102,22 +110,24 @@ def analyze_video_reverse_prompting(
     description = details.get("description", "")[:500] if details else ""
     tags = ", ".join(details.get("tags", []))[:200] if details else ""
 
-    print(f"\n🧠 Iniciando Ingeniería Inversa con {model}...")
+    lang_name = LANGUAGE_NAMES.get(language.lower(), "SPANISH")
+    print(f"\n🧠 Iniciando Ingeniería Inversa con {model} (Idioma: {language.upper()})...")
     print(f"   Video: '{video_title}' ({video_url})")
 
     system_instruction = (
         "Eres un analista experto de viralidad para YouTube Shorts.\n"
+        f"REGLA ESTRICTA DE IDIOMA: Responde absolutamente todo el análisis en {lang_name}.\n"
         "REGLAS OBLIGATORIAS:\n"
         "1. Responde ÚNICAMENTE con un objeto JSON válido.\n"
         "2. NO incluyas saltos de línea ni comillas dobles dentro de los textos de cada campo.\n"
         "3. Sé conciso: máximo 20 palabras por campo.\n\n"
         "Esquema JSON requerido:\n"
         "{\n"
-        '  "gancho_inicial": "Frase/elemento para frenar el scroll",\n'
-        '  "estructura_narrativa": "Conflicto, desarrollo y remate",\n'
-        '  "estilo_visual_narrativo": "Ritmo, gráficos, tono",\n'
-        '  "patron_retencion": "Recurso clave de retención",\n'
-        '  "areas_mejora": ["Mejora 1", "Mejora 2"]\n'
+        f'  "gancho_inicial": "Frase/elemento para frenar el scroll (en {lang_name})",\n'
+        f'  "estructura_narrativa": "Conflicto, desarrollo y remate (en {lang_name})",\n'
+        f'  "estilo_visual_narrativo": "Ritmo, gráficos, tono (en {lang_name})",\n'
+        f'  "patron_retencion": "Recurso clave de retención (en {lang_name})",\n'
+        f'  "areas_mejora": ["Mejora 1", "Mejora 2"]\n'
         "}"
     )
 
@@ -143,7 +153,7 @@ Ingeniería inversa para este video:
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.2,
-                max_tokens=800,  # 👈 Subido a 800 para evitar truncamiento
+                max_tokens=800,
                 response_format={"type": "json_object"}
             )
             raw_content = response.choices[0].message.content
@@ -161,7 +171,7 @@ Ingeniería inversa para este video:
                     {"role": "user", "content": prompt}
                 ],
                 "temperature": 0.2,
-                "max_tokens": 800,  # 👈 Subido a 800 para evitar truncamiento
+                "max_tokens": 800,
                 "response_format": {"type": "json_object"}
             }
             res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload, timeout=30)
@@ -169,7 +179,6 @@ Ingeniería inversa para este video:
             res_data = res.json()
             raw_content = res_data["choices"][0]["message"]["content"]
 
-        # Limpieza de markdown
         clean_json_str = raw_content.strip()
         if clean_json_str.startswith("```"):
             clean_json_str = re.sub(r"^```[a-zA-Z]*\n?", "", clean_json_str)
@@ -179,13 +188,13 @@ Ingeniería inversa para este video:
         validated_analysis = ReversePromptingAnalysis.model_validate(analysis_dict)
         final_result = validated_analysis.model_dump()
 
-        # Guardar en output
         os.makedirs("output", exist_ok=True)
         analysis_path = os.path.join("output", "reverse_prompting_analysis.json")
         with open(analysis_path, "w", encoding="utf-8") as f:
             json.dump({
                 "video_url": video_url,
                 "title": video_title,
+                "language": language,
                 "analysis": final_result
             }, f, ensure_ascii=False, indent=2)
 
@@ -220,7 +229,7 @@ def fetch_niche_trends(
     query: str,
     max_results: int = 10,
     days_back: int = 30,
-    language: str = "es",
+    language: str = TARGET_LANGUAGE,
     region_code: Optional[str] = None
 ) -> List[TrendVideo]:
     """
@@ -310,9 +319,9 @@ def display_trends_summary(trends: List[TrendVideo]):
     print("=" * 85)
 
 
-def get_selected_topic() -> Tuple[str, str]:
+def get_selected_topic(default_lang: str = TARGET_LANGUAGE) -> Tuple[str, str]:
     """
-    Función interactiva principal para main.py.
+    Función interactiva principal para el flujo del sistema.
     """
     print("\n" + "=" * 85)
     print(" 🔎 INVESTIGACIÓN DE NICHO Y TENDENCIAS EN YOUTUBE")
@@ -332,7 +341,7 @@ def get_selected_topic() -> Tuple[str, str]:
         print(f"\n✔ URL detectada: {video_url}")
         print(f"✔ Tema: '{title}'")
         
-        analyze_video_reverse_prompting(video_url=video_url, title=title)
+        analyze_video_reverse_prompting(video_url=video_url, title=title, language=default_lang)
         return title, video_url
 
     if not query_input:
@@ -341,14 +350,14 @@ def get_selected_topic() -> Tuple[str, str]:
         fallback_topic = fallback if fallback else "Consejos para mejorar tu productividad"
         custom_url = input("🔗 Ingrese la URL del video (opcional, ENTER para omitir): ").strip()
         if custom_url:
-            analyze_video_reverse_prompting(video_url=custom_url, title=fallback_topic)
+            analyze_video_reverse_prompting(video_url=custom_url, title=fallback_topic, language=default_lang)
         return fallback_topic, custom_url
 
     days_input = input("⏳ Días hacia atrás a analizar [por defecto 30]: ").strip()
     days = int(days_input) if days_input.isdigit() else 30
 
-    lang_input = input("🌐 Idioma (es/en) [por defecto 'es']: ").strip().lower()
-    lang = lang_input if lang_input in ["es", "en"] else "es"
+    lang_input = input(f"🌐 Idioma (es/en/pt) [por defecto '{default_lang}']: ").strip().lower()
+    lang = lang_input if lang_input in ["es", "en", "pt"] else default_lang
 
     results = fetch_niche_trends(query=query_input, max_results=10, days_back=days, language=lang)
     
@@ -369,7 +378,7 @@ def get_selected_topic() -> Tuple[str, str]:
                 with open(output_file, "w", encoding="utf-8") as f:
                     json.dump(selected.model_dump(), f, ensure_ascii=False, indent=2)
                 
-                analyze_video_reverse_prompting(video_url=selected.video_url, title=selected.title)
+                analyze_video_reverse_prompting(video_url=selected.video_url, title=selected.title, language=lang)
                 return selected.title, selected.video_url
 
         elif len(choice) > 0:
@@ -384,7 +393,7 @@ def get_selected_topic() -> Tuple[str, str]:
             print(f"\n✔ Tema personalizado: '{topic_result}'")
             if custom_url:
                 print(f"✔ URL ingresada: '{custom_url}'")
-                analyze_video_reverse_prompting(video_url=custom_url, title=topic_result)
+                analyze_video_reverse_prompting(video_url=custom_url, title=topic_result, language=lang)
 
             os.makedirs("output", exist_ok=True)
             output_file = os.path.join("output", "selected_trend.json")
@@ -408,7 +417,7 @@ def get_selected_topic() -> Tuple[str, str]:
     custom_url = input("🔗 Ingrese la URL del video (opcional, ENTER para omitir): ").strip()
 
     if custom_url:
-        analyze_video_reverse_prompting(video_url=custom_url, title=topic_result)
+        analyze_video_reverse_prompting(video_url=custom_url, title=topic_result, language=lang)
 
     os.makedirs("output", exist_ok=True)
     output_file = os.path.join("output", "selected_trend.json")
@@ -432,17 +441,17 @@ if __name__ == "__main__":
     parser.add_argument("--query", type=str, help="Término o tema de búsqueda")
     parser.add_argument("--url", type=str, help="URL de video individual para análisis por Ingeniería Inversa")
     parser.add_argument("--days", type=int, default=30, help="Días hacia atrás")
-    parser.add_argument("--lang", type=str, default="es", help="Código de idioma (es, en)")
+    parser.add_argument("--lang", type=str, default=TARGET_LANGUAGE, help="Código de idioma (es, en, pt)")
     parser.add_argument("--model", type=str, default="google/gemini-3.7-flash", help="Modelo de Gemini en OpenRouter")
     
     args = parser.parse_args()
 
     if args.url:
-        analyze_video_reverse_prompting(video_url=args.url, model=args.model)
+        analyze_video_reverse_prompting(video_url=args.url, model=args.model, language=args.lang)
     elif args.query:
         trends = fetch_niche_trends(query=args.query, max_results=10, days_back=args.days, language=args.lang)
         display_trends_summary(trends)
     else:
-        topic, video_url = get_selected_topic()
+        topic, video_url = get_selected_topic(default_lang=args.lang)
         print(f"\n🎯 Tema final seleccionado: '{topic}'")
         print(f"🔗 URL seleccionada / ingresada: '{video_url}'")

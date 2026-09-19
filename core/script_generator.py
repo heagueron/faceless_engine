@@ -7,6 +7,15 @@ from typing import List, Optional, Dict, Any, Literal
 from dotenv import load_dotenv
 import requests
 
+from core.config import TARGET_LANGUAGE
+
+# Mapeo auxiliar para indicarle al LLM el nombre del idioma en inglés
+LANGUAGE_NAMES = {
+    "es": "SPANISH",
+    "en": "ENGLISH",
+    "pt": "PORTUGUESE"
+}
+
 try:
     from openai import OpenAI
 except ImportError:
@@ -75,6 +84,7 @@ class Scene(BaseModel):
 
 
 class ScriptManifest(BaseModel):
+    language: str = Field(default="es", description="Código de idioma del proyecto ('es', 'en', 'pt', etc.)")
     title: str = Field(description="Título sugerido y atractivo para el video")
     video_type: str = Field(default="long", description="Tipo de video: 'short' o 'long'")
     aspect_ratio: str = Field(default="16:9", description="Relación de aspecto: '9:16' o '16:9'")
@@ -250,14 +260,16 @@ def generate_script_from_openrouter(
     video_type: str = "long",
     aspect_ratio: str = "16:9",
     model: str = "google/gemini-3.7-flash",
-    batch_size: int = 15
+    batch_size: int = 15,
+    language: str = TARGET_LANGUAGE
 ) -> Optional[ScriptManifest]:
     """Genera el guion dividiendo la tarea en Escaleta Global + Lotes para evitar desbordamiento de tokens."""
     topic = idea_data.get("topic", "")
     idea = idea_data.get("selected_idea", {})
     target_scenes = max(3, round(target_duration / 7.0))
+    lang_name = LANGUAGE_NAMES.get(language.lower(), "SPANISH")
 
-    print(f"\n🧠 Iniciando generación de guion: {target_duration}s (~{target_scenes} escenas, {aspect_ratio}) vía {model}...")
+    print(f"\n🧠 Iniciando generación de guion: {target_duration}s (~{target_scenes} escenas, {aspect_ratio}, idioma: {language.upper()}) vía {model}...")
 
     # --------------------------------------------------------------------------
     # FASE 1: GENERACIÓN DE LA ESCALETA GLOBAL (MASTER OUTLINE)
@@ -269,12 +281,16 @@ Eres un director de arte y guionista experto en videos educativos virales de eco
 Tu tarea es definir la ESTRUCTURA GLOBAL y la MINIATURA de un video de {target_duration} segundos.
 Debes proyectar exactamente {target_scenes} escenas continuas.
 
+REGLAS DE IDIOMA:
+1. All narration summaries, headlines, titles, and text overlays MUST be strictly in {lang_name}.
+2. Visual prompts (thumbnail_prompt) MUST be strictly in ENGLISH.
+
 REGLAS DE MINIATURA (THUMBNAIL):
 1. STRICT NO-TEXT RULE IN RAW IMAGE: The thumbnail_prompt raw image MUST be 100% clean of typography.
 2. CLEAN 2D VECTOR CARTOON STYLE: Saturated cell-shaded 2D style, high-contrast split backgrounds.
 3. TIGHT COMPOSITION: Medium close-up shot, key characters fill 80% frame near center.
 4. thumbnail_prompt: Prompt ultradetallado en INGLÉS.
-5. thumbnail_text: Texto de gancho en MAYÚSCULAS en español (2-3 palabras máximo) o "" si no aplica.
+5. thumbnail_text: Texto de gancho en MAYÚSCULAS en {lang_name} (2-3 palabras máximo) o "" si no aplica.
 
 Esquema JSON requerido:
 {{
@@ -320,6 +336,11 @@ Cantidad total de escenas requeridas: {target_scenes} escenas.
 Eres un director de arte y guionista experto en videos educativos de economía y finanzas en estilo animación 2D vectorial limpia (cell-shaded).
 Generas un subconjunto de escenas específicas manteniendo absoluta continuidad narrativa con las escenas previas.
 
+REGLAS STRICTAS DE IDIOMA:
+1. 'narration_text' MUST be written strictly in {lang_name}.
+2. 'overlay_content' ('title' and 'bullets') MUST be written strictly in {lang_name}.
+3. 'visual_prompt' MUST ALWAYS be written strictly in ENGLISH (regardless of target language).
+
 REGLAS ESTRICTAS DE LAYOUT (layout_type):
 1. layout_type = 'full_art' (DEFAULT): Para la mayoría de las escenas narrativas o conceptuales. Ocupa el 100% de la pantalla sin texto.
 2. layout_type = 'split_right': Cuando se expliquen 2-3 puntos clave o cifras importantes que requieran apoyo visual escrito. La IA generará la imagen dejando el 30% derecho libre para una tarjeta de texto superpuesta por Python.
@@ -339,7 +360,7 @@ Esquema JSON requerido para este lote:
   "scenes": [
     {{
       "scene_number": 1,
-      "narration_text": "Texto exacto de locución en español...",
+      "narration_text": "Texto exacto de locución en {lang_name}...",
       "layout_type": "full_art",
       "visual_prompt": "Clean 2D vector cartoon illustration...",
       "overlay_content": null,
@@ -347,7 +368,7 @@ Esquema JSON requerido para este lote:
     }},
     {{
       "scene_number": 2,
-      "narration_text": "Texto explicativo...",
+      "narration_text": "Texto explicativo en {lang_name}...",
       "layout_type": "split_right",
       "visual_prompt": "Clean 2D vector cartoon illustration...",
       "overlay_content": {{
@@ -402,6 +423,7 @@ Instrucciones: Devuelve el objeto JSON 'scenes' correspondiente EXCLUSIVAMENTE a
     )
 
     manifest_dict = {
+        "language": language,
         "title": outline_data.get("title", idea.get("titulo", topic)),
         "video_type": video_type,
         "aspect_ratio": aspect_ratio,
@@ -518,7 +540,8 @@ def generate_script(
     video_type: str = "long",
     aspect_ratio: str = "16:9",
     model: str = "google/gemini-3.7-flash",
-    project_dir: Optional[str] = None
+    project_dir: Optional[str] = None,
+    language: str = TARGET_LANGUAGE
 ) -> Dict[str, Any]:
     """Flujo completo de generación, aprobación y almacenamiento del guion."""
     print("\n" + "=" * 85)
@@ -548,7 +571,8 @@ def generate_script(
         target_duration=target_duration,
         video_type=video_type,
         aspect_ratio=aspect_ratio,
-        model=model
+        model=model,
+        language=language
     )
 
     if not manifest:
@@ -585,11 +609,13 @@ if __name__ == "__main__":
     parser.add_argument("--type", type=str, default="long", choices=["short", "long"], help="Tipo de video")
     parser.add_argument("--ratio", type=str, default="16:9", choices=["9:16", "16:9"], help="Aspect Ratio")
     parser.add_argument("--model", type=str, default="google/gemini-3.7-flash", help="Modelo de OpenRouter")
+    parser.add_argument("--lang", type=str, default=TARGET_LANGUAGE, help="Idioma objetivo del video (es, en, pt)")
 
     args = parser.parse_args()
     generate_script(
         target_duration=args.duration,
         video_type=args.type,
         aspect_ratio=args.ratio,
-        model=args.model
+        model=args.model,
+        language=args.lang
     )

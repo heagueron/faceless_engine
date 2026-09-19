@@ -10,7 +10,59 @@ try:
 except ImportError:
     OpenAI = None
 
+from core.config import TARGET_LANGUAGE
+
 load_dotenv()
+
+# Mapeo de nombres de idioma para prompts
+LANGUAGE_NAMES = {
+    "es": "SPANISH",
+    "en": "ENGLISH",
+    "pt": "PORTUGUESE"
+}
+
+# Diccionario de textos de interfaz y fallbacks por idioma
+UI_LABELS = {
+    "es": {
+        "chapters_header": "📌 CAPÍTULOS DEL VIDEO:",
+        "question_header": "💬 PREGUNTA DEL DÍA:",
+        "cta_suffix": "¡Déjanos tu opinión en los comentarios! 👇",
+        "disclaimer_header": "⚠️ DESCARGO DE RESPONSABILIDAD:",
+        "disclaimer_text": "El contenido de este video es puramente educativo e informativo. No constituye asesoramiento financiero, legal o de inversión.",
+        "comment_default": "¿Qué opinas sobre {}? ¡Déjanos tu comentario abajo! 👇",
+        "fallback_summary": "Análisis sobre {}. Descubre los detalles clave en este video.",
+        "fallback_hashtags": ["#Economia", "#Finanzas", "#Educacion"],
+        "fallback_intro": "Introducción",
+        "fallback_main": "Análisis principal",
+        "fallback_cta": "¿Tú qué opinas?"
+    },
+    "en": {
+        "chapters_header": "📌 VIDEO CHAPTERS:",
+        "question_header": "💬 QUESTION OF THE DAY:",
+        "cta_suffix": "Leave your opinion in the comments below! 👇",
+        "disclaimer_header": "⚠️ DISCLAIMER:",
+        "disclaimer_text": "The content of this video is purely educational and informational. It does not constitute financial, legal, or investment advice.",
+        "comment_default": "What do you think about {}? Leave your comment below! 👇",
+        "fallback_summary": "Analysis of {}. Discover the key details in this video.",
+        "fallback_hashtags": ["#Economy", "#Finance", "#Education"],
+        "fallback_intro": "Introduction",
+        "fallback_main": "Main Analysis",
+        "fallback_cta": "What do you think?"
+    },
+    "pt": {
+        "chapters_header": "📌 CAPÍTULOS DO VÍDEO:",
+        "question_header": "💬 PERGUNTA DO DIA:",
+        "cta_suffix": "Deixe sua opinião nos comentários! 👇",
+        "disclaimer_header": "⚠️ ISENÇÃO DE RESPONSABILIDADE:",
+        "disclaimer_text": "O conteúdo deste vídeo é puramente educacional e informativo. Não constitui conselho financeiro, legal ou de investimento.",
+        "comment_default": "O que você acha sobre {}? Deixe seu comentário abaixo! 👇",
+        "fallback_summary": "Análise sobre {}. Descubra os detalhes fundamentais neste vídeo.",
+        "fallback_hashtags": ["#Economia", "#Financas", "#Educacao"],
+        "fallback_intro": "Introdução",
+        "fallback_main": "Análise principal",
+        "fallback_cta": "Qual é a sua opinião?"
+    }
+}
 
 
 # --- UTILIDADES DE TIEMPO ---
@@ -52,10 +104,14 @@ def generate_seo_metadata_and_chapters(
     title: str,
     scenes_with_time: List[Dict[str, Any]],
     target_duration: int = 60,
+    language: str = TARGET_LANGUAGE,
     model: str = "google/gemini-3.7-flash"
 ) -> Dict[str, Any]:
     """Sintetiza un resumen SEO, etiquetas y marca capítulos temáticos agrupados por significado."""
     api_key = os.getenv("OPENROUTER_API_KEY")
+    lang_key = language.lower()
+    lang_name = LANGUAGE_NAMES.get(lang_key, "SPANISH")
+    labels = UI_LABELS.get(lang_key, UI_LABELS["es"])
 
     # Formatear el timeline para que el LLM lo entienda
     timeline_str = "\n".join([
@@ -64,31 +120,34 @@ def generate_seo_metadata_and_chapters(
     ])
 
     cta_scene = next((sc for sc in scenes_with_time if sc.get("is_interactive_cta")), None)
-    cta_question = cta_scene["narration_text"] if cta_scene else None
 
-    system_prompt = (
-        "Eres un experto en optimización SEO y retención para YouTube en el nicho de economía y finanzas.\n"
-        "Tu tarea es analizar el guion de un video con sus marcas de tiempo y generar los metadatos de publicación.\n\n"
-        "REGLAS ESTRICTAS PARA LOS CAPÍTULOS DE YOUTUBE (TIMELINE):\n"
-        "1. NO crees un capítulo por cada escena. Agrupa las escenas en bloques temáticos principales.\n"
-        "2. El primer capítulo DEBE ser obligatoriamente a los '00:00'.\n"
-        "3. Duración total del video ~ " + str(target_duration) + " segundos:\n"
-        "   - Si el video dura ~1 minuto (Short/Reel/Largo corto): Genera entre 3 y 4 capítulos clave como máximo (espaciados al menos 15-20s).\n"
-        "   - Si el video dura más de 5 minutos: Genera entre 5 y 8 capítulos temáticos (espaciados al menos 45-60s).\n"
-        "4. Asigna a cada capítulo un título llamativo, breve (3-6 palabras) y descriptivo derivado del contenido de esas escenas (ej: '00:21 - La estrategia de liquidez', NUNCA use 'Parte 1', 'Parte 2').\n"
-        "5. Si hay una escena interactiva final (CTA), haz que sea el último capítulo (ej. '¿Tú qué opinas?').\n\n"
-        "Responde EXCLUSIVAMENTE con un JSON con esta estructura:\n"
-        "{\n"
-        '  "seo_summary": "Resumen persuasivo de 2-3 oraciones optimizado para SEO.",\n'
-        '  "hashtags": ["#Hashtag1", "#Hashtag2", "#Hashtag3"],\n'
-        '  "tags": ["etiqueta 1", "etiqueta 2", "palabra clave 3"],\n'
-        '  "chapters": [\n'
-        '    {"timestamp": "00:00", "title": "Introducción / El aviso de Buffett"},\n'
-        '    {"timestamp": "00:21", "title": "Acumulación masiva de liquidez"},\n'
-        '    {"timestamp": "00:53", "title": "¿Tú qué opinas?"}\n'
-        '  ]\n'
-        "}"
-    )
+    system_prompt = f"""
+Eres un experto en optimización SEO y retención para YouTube en el nicho de economía y finanzas.
+Tu tarea es analizar el guion de un video con sus marcas de tiempo y generar los metadatos de publicación.
+
+REGLA STRICTA DE IDIOMA:
+Todo el contenido (seo_summary, hashtags, tags, y los títulos de los chapters) DEBE estar escrito estrictamente en {lang_name}.
+
+REGLAS ESTRICTAS PARA LOS CAPÍTULOS DE YOUTUBE (TIMELINE):
+1. NO crees un capítulo por cada escena. Agrupa las escenas en bloques temáticos principales.
+2. El primer capítulo DEBE ser obligatoriamente a los '00:00'.
+3. Duración total del video ~ {target_duration} segundos:
+   - Si el video dura ~1 minuto (Short/Reel/Largo corto): Genera entre 3 y 4 capítulos clave como máximo (espaciados al menos 15-20s).
+   - Si el video dura más de 5 minutos: Genera entre 5 y 8 capítulos temáticos (espaciados al menos 45-60s).
+4. Asigna a cada capítulo un título llamativo, breve (3-6 palabras) y descriptivo derivado del contenido de esas escenas.
+5. Si hay una escena interactiva final (CTA), haz que sea el último capítulo.
+
+Responde EXCLUSIVAMENTE con un JSON con esta estructura:
+{{
+  "seo_summary": "Resumen persuasivo en {lang_name} de 2-3 oraciones optimizado para SEO.",
+  "hashtags": ["#Hashtag1", "#Hashtag2", "#Hashtag3"],
+  "tags": ["etiqueta 1", "etiqueta 2", "palabra clave 3"],
+  "chapters": [
+    {{"timestamp": "00:00", "title": "Título en {lang_name}"}},
+    {{"timestamp": "00:21", "title": "Título en {lang_name}"}}
+  ]
+}}
+"""
 
     user_prompt = f"Título del video: {title}\n\nEstructura temporal del video:\n{timeline_str}"
 
@@ -125,18 +184,18 @@ def generate_seo_metadata_and_chapters(
     except Exception as e:
         print(f"⚠️ No se pudo generar SEO y capítulos vía LLM ({e}). Se usará fallback heurístico.")
 
-    # Fallback heurístico en caso de fallo de API
+    # Fallback heurístico en el idioma adecuado
     fallback_chapters = [
-        {"timestamp": "00:00", "title": "Introducción"},
-        {"timestamp": scenes_with_time[len(scenes_with_time)//2]["timestamp"], "title": "Análisis principal"}
+        {"timestamp": "00:00", "title": labels["fallback_intro"]},
+        {"timestamp": scenes_with_time[len(scenes_with_time)//2]["timestamp"], "title": labels["fallback_main"]}
     ]
     if cta_scene:
-        fallback_chapters.append({"timestamp": cta_scene["timestamp"], "title": "¿Tú qué opinas?"})
+        fallback_chapters.append({"timestamp": cta_scene["timestamp"], "title": labels["fallback_cta"]})
 
     return {
-        "seo_summary": f"Análisis sobre {title}. Descubre los detalles clave en este video.",
-        "hashtags": ["#Economia", "#Finanzas", "#Educacion"],
-        "tags": [title.lower(), "economia", "finanzas"],
+        "seo_summary": labels["fallback_summary"].format(title),
+        "hashtags": labels["fallback_hashtags"],
+        "tags": [title.lower(), "economy", "finance"],
         "chapters": fallback_chapters
     }
 
@@ -173,6 +232,9 @@ def generate_description(
     title = manifest.get("title", "Video Sin Título")
     scenes = manifest.get("scenes", [])
     target_duration = manifest.get("target_duration_seconds", 60)
+    language = manifest.get("language", TARGET_LANGUAGE).lower()
+
+    labels = UI_LABELS.get(language, UI_LABELS["es"])
 
     # Preparar escenas con tiempos absolutos
     scenes_with_time = prepare_scenes_with_timestamps(scenes)
@@ -188,6 +250,7 @@ def generate_description(
         title=title,
         scenes_with_time=scenes_with_time,
         target_duration=target_duration,
+        language=language,
         model=model
     )
 
@@ -201,22 +264,22 @@ def generate_description(
     desc_lines = [
         seo_data["seo_summary"],
         "",
-        "📌 CAPÍTULOS DEL VIDEO:",
+        labels["chapters_header"],
         formatted_chapters,
         ""
     ]
 
     if cta_question:
         desc_lines.extend([
-            "💬 PREGUNTA DEL DÍA:",
-            f"{cta_question} ¡Déjanos tu opinión en los comentarios! 👇",
+            labels["question_header"],
+            f"{cta_question} {labels['cta_suffix']}",
             ""
         ])
 
     desc_lines.extend([
         "--------------------------------------------------",
-        "⚠️ DESCARGO DE RESPONSABILIDAD:",
-        "El contenido de este video es puramente educativo e informativo. No constituye asesoramiento financiero, legal o de inversión.",
+        labels["disclaimer_header"],
+        labels["disclaimer_text"],
         "",
         " ".join(seo_data["hashtags"])
     ])
@@ -224,7 +287,7 @@ def generate_description(
     final_description = "\n".join(desc_lines)
 
     # 5. Construir comentario fijado
-    pinned_comment = cta_question if cta_question else f"¿Qué opinas sobre {title}? ¡Déjanos tu comentario abajo! 👇"
+    pinned_comment = cta_question if cta_question else labels["comment_default"].format(title)
 
     # 6. Escribir archivos en la carpeta del proyecto
     desc_path = os.path.join(project_dir, "description.txt")
@@ -240,7 +303,7 @@ def generate_description(
     metadata_payload = {
         "title": title,
         "category_id": "27",  # Educación en YouTube
-        "language": "es",
+        "language": language,
         "privacy_status": "private",
         "tags": seo_data["tags"],
         "hashtags": seo_data["hashtags"],

@@ -12,8 +12,16 @@ except ImportError:
     OpenAI = None
 
 from pydantic import BaseModel, Field
+from core.config import TARGET_LANGUAGE
 
 load_dotenv()
+
+# Mapeo de nombres de idioma para prompts de la IA
+LANGUAGE_NAMES = {
+    "es": "SPANISH",
+    "en": "ENGLISH",
+    "pt": "PORTUGUESE"
+}
 
 
 # --- ESQUEMAS DE DATOS (PYDANTIC) ---
@@ -51,15 +59,17 @@ def load_reverse_analysis() -> Optional[Dict[str, Any]]:
 def generate_ideas_from_openrouter(
     topic: str,
     reverse_analysis: Optional[Dict[str, Any]] = None,
-    model: str = "google/gemini-3.7-flash"
+    model: str = "google/gemini-3.7-flash",
+    language: str = TARGET_LANGUAGE
 ) -> Optional[IdeasResponse]:
-    """Genera 5 propuestas de ángulos de video mediante OpenRouter."""
+    """Genera 5 propuestas de ángulos de video mediante OpenRouter en el idioma objetivo."""
     api_key = os.getenv("OPENROUTER_API_KEY")
     if not api_key:
         print("❌ Error: OPENROUTER_API_KEY no encontrada en .env")
         return None
 
-    print(f"\n🧠 Ideando ángulos virales para '{topic}' usando {model}...")
+    lang_name = LANGUAGE_NAMES.get(language.lower(), "SPANISH")
+    print(f"\n🧠 Ideando ángulos virales para '{topic}' (idioma: {language.upper()}) usando {model}...")
 
     style_guidelines = ""
     if reverse_analysis:
@@ -68,24 +78,28 @@ def generate_ideas_from_openrouter(
             f"- Retención basada en: {reverse_analysis.get('patron_retencion', 'Ganchos fuertes y alto ritmo')}\n"
         )
 
-    system_instruction = (
-        "Eres un estratega de contenido experto en YouTube Shorts, Reels y TikTok.\n"
-        "Tu objetivo es proponer 5 ángulos virales distintos y altamente atractivos basados en el tema proporcionado.\n"
-        "Cada opción debe incluir un gancho inicial irresistible (primeros 3 segundos), un resumen rápido de la premisa y un remate final memorable.\n\n"
-        "Responde EXCLUSIVAMENTE en JSON que cumpla el esquema requerido:\n"
-        "{\n"
-        '  "topic": "Tema general",\n'
-        '  "ideas": [\n'
-        '    {\n'
-        '      "id": 1,\n'
-        '      "titulo": "Título corto y magnético",\n'
-        '      "gancho_inicial": "Pregunta o afirmación chocante para los primeros 3 segundos",\n'
-        '      "resumen_premisa": "Desarrollo rápido del tema en 2 frases",\n'
-        '      "remate_o_giro": "Conclusión impactante o reflexión final"\n'
-        '    }\n'
-        '  ]\n'
-        "}"
-    )
+    system_instruction = f"""
+Eres un estratega de contenido experto en YouTube Shorts, Reels y TikTok.
+Tu objetivo es proponer 5 ángulos virales distintos y altamente atractivos basados en el tema proporcionado.
+Cada opción debe incluir un gancho inicial irresistible (primeros 3 segundos), un resumen rápido de la premisa y un remate final memorable.
+
+REGLA ESTRICTA DE IDIOMA:
+Todas las propuestas (titulo, gancho_inicial, resumen_premisa, remate_o_giro) DEBEN estar escritas estrictamente en {lang_name}.
+
+Responde EXCLUSIVAMENTE en JSON que cumpla el esquema requerido:
+{{
+  "topic": "Tema general",
+  "ideas": [
+    {{
+      "id": 1,
+      "titulo": "Título corto y magnético en {lang_name}",
+      "gancho_inicial": "Pregunta o afirmación chocante en {lang_name}",
+      "resumen_premisa": "Desarrollo rápido del tema en 2 frases en {lang_name}",
+      "remate_o_giro": "Conclusión impactante o reflexión final en {lang_name}"
+    }}
+  ]
+}}
+"""
 
     user_prompt = f"""
 Tema principal: {topic}
@@ -264,7 +278,8 @@ def select_idea_interactive(ideas_res: IdeasResponse) -> VideoIdea:
 def generate_ideas(
     topic: Optional[str] = None,
     project_dir: Optional[str] = None,
-    model: str = "google/gemini-3.7-flash"
+    model: str = "google/gemini-3.7-flash",
+    language: str = TARGET_LANGUAGE
 ) -> Dict[str, Any]:
     """Genera ideas, solicita la elección del usuario y guarda la selección."""
     if not topic:
@@ -286,7 +301,8 @@ def generate_ideas(
     ideas_res = generate_ideas_from_openrouter(
         topic=topic,
         reverse_analysis=reverse_analysis,
-        model=model
+        model=model,
+        language=language
     )
 
     if not ideas_res or not ideas_res.ideas:
@@ -302,6 +318,7 @@ def generate_ideas(
         selected_idea = select_idea_interactive(ideas_res)
 
     output_payload = {
+        "language": language,
         "topic": topic,
         "selected_idea": selected_idea.model_dump()
     }
@@ -326,6 +343,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generador de Ideas y Ángulos Virales")
     parser.add_argument("--topic", type=str, default=None, help="Tema del video")
     parser.add_argument("--model", type=str, default="google/gemini-3.7-flash", help="Modelo de OpenRouter")
+    parser.add_argument("--lang", type=str, default=TARGET_LANGUAGE, help="Idioma objetivo (es, en, pt)")
 
     args = parser.parse_args()
-    generate_ideas(topic=args.topic, model=args.model)
+    generate_ideas(topic=args.topic, model=args.model, language=args.lang)

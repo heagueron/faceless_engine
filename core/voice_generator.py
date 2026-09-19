@@ -3,9 +3,18 @@ import re
 import json
 import asyncio
 import argparse
-from typing import Optional
+from typing import Optional, Dict
 import edge_tts
 from mutagen.mp3 import MP3
+
+from core.config import TARGET_LANGUAGE
+
+# Mapeo de voces por defecto de Edge-TTS por idioma
+DEFAULT_EDGE_VOICES: Dict[str, str] = {
+    "es": "es-VE-SebastianNeural",
+    "en": "en-US-ChristopherNeural",
+    "pt": "pt-BR-AntonioNeural"
+}
 
 
 def normalize_numbers_for_tts(text: str) -> str:
@@ -74,12 +83,12 @@ def generate_scene_audio(
 def generate_voice_over(
     project_dir: Optional[str] = None,
     target_scene: Optional[int] = None,
-    voice: str = "es-VE-SebastianNeural",
+    voice: Optional[str] = None,
     rate: str = "+0%"
 ):
     """
     Genera el audio TTS para las escenas del manifest.json usando edge-tts.
-    Soporta procesamiento individual si se pasa target_scene.
+    Detecta automáticamente el idioma del manifiesto para elegir la voz idónea.
     """
     if not project_dir:
         project_dir = get_current_project_dir()
@@ -94,6 +103,14 @@ def generate_voice_over(
 
     with open(manifest_path, "r", encoding="utf-8") as f:
         manifest = json.load(f)
+
+    # 1. Determinar idioma del proyecto y voz
+    project_lang = manifest.get("language", TARGET_LANGUAGE).lower()
+    
+    if not voice:
+        selected_voice = DEFAULT_EDGE_VOICES.get(project_lang, DEFAULT_EDGE_VOICES["es"])
+    else:
+        selected_voice = voice.strip()
 
     all_scenes = manifest.get("scenes", [])
     if not all_scenes:
@@ -110,7 +127,7 @@ def generate_voice_over(
 
     print("\n" + "=" * 80)
     print(" 🎙️ GENERANDO AUDIO NEURONAL (edge-tts)")
-    print(f" 🗣️ Voz: {voice.strip()} | Velocidad: {rate}")
+    print(f" 🌐 Idioma: {project_lang.upper()} | 🗣️ Voz: {selected_voice} | Velocidad: {rate}")
     if target_scene:
         print(f" 🎯 MODO ESCENA ÚNICA: Procesando la Escena #{target_scene}")
     print("=" * 80)
@@ -135,7 +152,7 @@ def generate_voice_over(
             print(f"   Texto procesado TTS: \"{tts_text}\"")
 
         try:
-            duration = generate_scene_audio(tts_text, audio_path, voice=voice.strip(), rate=rate)
+            duration = generate_scene_audio(tts_text, audio_path, voice=selected_voice, rate=rate)
             scene["audio_file"] = audio_path
             scene["audio_duration_seconds"] = duration
             print(f"   ✔ Guardado: {audio_path} ({duration}s)")
@@ -166,7 +183,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Módulo de Locución Neural (edge-tts)")
     parser.add_argument("--project_dir", type=str, default=None, help="Directorio del proyecto")
     parser.add_argument("--scene", type=int, default=None, help="Número de escena específica a regenerar")
-    parser.add_argument("--voice", type=str, default="es-VE-SebastianNeural", help="Voz neural")
+    parser.add_argument("--voice", type=str, default=None, help="Voz neural opcional (si se omite, auto-selecciona por idioma)")
     parser.add_argument("--rate", type=str, default="+0%", help="Ajuste de velocidad")
 
     args = parser.parse_args()
