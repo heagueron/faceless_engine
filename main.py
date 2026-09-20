@@ -4,6 +4,8 @@ import json
 import unicodedata
 from datetime import datetime
 
+import argparse
+
 from core.trend_analyzer import get_selected_topic
 from core.ideas import generate_ideas
 from core.script_generator import generate_script
@@ -68,8 +70,12 @@ def select_video_format_and_duration():
     return video_type, aspect_ratio, target_duration
 
 
-def run_pipeline():
+def run_pipeline(args=None):
     """Ejecuta el flujo completo de producción de video en Faceless Engine."""
+
+    if args is None:
+        args = parse_main_args()
+
     # 1. Investigar nicho, seleccionar tema e ingeniería inversa desde YouTube
     topic, video_url = get_selected_topic()
 
@@ -98,7 +104,7 @@ def run_pipeline():
         target_duration=target_duration,
         video_type=video_type,
         aspect_ratio=aspect_ratio,
-        project_dir=project_dir
+        project_dir=project_dir,
     )
 
     # 6. Generar locuciones de audio por escena
@@ -141,6 +147,18 @@ def run_pipeline():
     print("  └─ ⚙️ Metadatos YouTube (metadata.json)")
     print("=" * 80)
 
+import argparse
+
+def parse_main_args():
+    parser = argparse.ArgumentParser(description="Faceless Engine - Pipeline completo")
+    parser.add_argument(
+        "--style",
+        type=str,
+        default=None,
+        help="Clave del estilo visual (ej. flat_vector, stick_figure_minimalist, cyberpunk...)"
+    )
+    parser.add_argument("--lang", type=str, default=None, help="Idioma (es, en, pt)")
+    return parser.parse_args()
 
 if __name__ == "__main__":
     try:

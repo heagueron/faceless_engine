@@ -32,6 +32,8 @@ DEFAULT_MODELS = {
 # ==============================================================================
 
 
+
+
 def parse_scene_input(scene_str: str) -> List[int]:
     """
     Soporta formatos:
@@ -73,6 +75,28 @@ def get_current_project_dir() -> str:
     raise FileNotFoundError(
         "No se especificó --project_dir y no se encontró un proyecto válido en 'output/current_project.json'."
     )
+
+def enforce_style_in_prompt(prompt: str, manifest: Dict[str, Any]) -> str:
+    """
+    Verifica que el prompt contenga el estilo declarado en el manifest.
+    Si no, lo inyecta como prefijo. Esto protege contra:
+      - LLMs que omiten el estilo
+      - Ediciones manuales del manifest
+      - Proyectos viejos sin 'visual_style_prompt'
+    """
+    if not prompt:
+        return prompt
+
+    style_prompt = manifest.get("visual_style_prompt", "").strip()
+    if not style_prompt:
+        return prompt
+
+    # Heurística: primeras 30 chars del estilo deben aparecer en el prompt
+    marker = style_prompt[:30].lower()
+    if marker not in prompt.lower():
+        print(f"   🔧 Estilo ausente en prompt. Inyectando: '{style_prompt[:50]}...'")
+        prompt = f"{style_prompt} {prompt}"
+    return prompt
 
 def wrap_text_by_pixel_width(text: str, font: ImageFont.FreeTypeFont, max_width_px: int) -> List[str]:
     """
@@ -464,6 +488,9 @@ def process_thumbnail(
         return True
 
     print("\n🖼️ Procesando Miniatura Cruda (Thumbnail)...")
+
+    thumbnail_prompt = enforce_style_in_prompt(thumbnail_prompt, manifest)
+
     print(f"   Prompt: \"{thumbnail_prompt[:90]}...\"")
 
     if provider_key == "openrouter":
@@ -650,6 +677,7 @@ def process_scene_media(
     rate_limit_delay: float = 1.0
 ):
     """Procesa escenas y/o miniatura del manifest.json aplicando overlays de texto según el layout."""
+    
     provider_key = provider.lower().strip()
     if provider_key not in ["openrouter", "fal"]:
         print(f"⚠️ Proveedor '{provider}' no válido. Usando '{DEFAULT_IMAGE_PROVIDER}'.")
@@ -668,6 +696,11 @@ def process_scene_media(
     os.makedirs(images_dir, exist_ok=True)
 
     aspect_ratio = manifest.get("aspect_ratio", "16:9")
+
+    if manifest.get("visual_style"):
+        print(f"🎨 Estilo del proyecto: '{manifest['visual_style']}'")
+    else:
+        print("⚠️ manifest.json no tiene 'visual_style'. Se asume estilo legacy.")
 
     print("\n" + "=" * 80)
     print(f" 🖼️ GENERANDO RECURSOS VISUALES MEDIANTE {provider_key.upper()} ({selected_model})")
@@ -712,6 +745,9 @@ def process_scene_media(
         image_filename = f"scene_{idx}.jpg"
         image_path = os.path.join(images_dir, image_filename)
 
+        # En process_scene_media, dentro del loop:
+        
+
         # Checkpoint: Si la imagen existe y es válida, verificamos si requiere estampado de overlay antes de omitir
         if not force and is_valid_image_file(image_path):
             if layout_type == "split_right" and overlay_content:
@@ -722,6 +758,8 @@ def process_scene_media(
             continue
 
         print(f"\n🖼️ Procesando Escena {idx} [{layout_type.upper()}]...")
+
+        visual_prompt = enforce_style_in_prompt(visual_prompt, manifest)
 
         if layout_type == "code_graphic":
             print("   📊 Escena tipo 'code_graphic'. Generando tarjeta de texto...")

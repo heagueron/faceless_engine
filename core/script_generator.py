@@ -9,6 +9,17 @@ import requests
 
 from core.config import TARGET_LANGUAGE
 
+from core.styles import (
+    get_style_prompt,
+    get_style_key,
+    get_style_background_rules,
+    get_style_description,      # ← FALTABA
+    build_style_directive,
+    list_available_styles,      # ← FALTABA
+    STYLE_PROMPTS,
+    DEFAULT_STYLE_KEY
+)
+
 # Mapeo auxiliar para indicarle al LLM el nombre del idioma en inglés
 LANGUAGE_NAMES = {
     "es": "SPANISH",
@@ -25,19 +36,6 @@ from pydantic import BaseModel, Field
 
 load_dotenv()
 
-
-# --- CONSTANTES DE ESTILO VISUAL (FLUX.1 SCHNELL / FINANZAS) ---
-
-CHARACTER_STYLE = (
-    "Clean 2D vector cartoon illustration, cell-shaded style. "
-    "Characters: Expressive 2D cartoon human figures with natural skin tones, "
-    "clear facial features, classic hairstyles, and simple textured clothing."
-)
-
-BG_BASE_RULES = (
-    "spacious uncluttered composition, soft depth of field, "
-    "completely clean without any text, letters, or words"
-)
 
 PROMPT_SUFFIX = "16:9 horizontal widescreen ratio"
 
@@ -85,6 +83,16 @@ class Scene(BaseModel):
 
 class ScriptManifest(BaseModel):
     language: str = Field(default="es", description="Código de idioma del proyecto ('es', 'en', 'pt', etc.)")
+    
+    visual_style: str = Field(
+        default="cartoon_2d_cellshaded",
+        description="Clave del estilo visual aplicado (debe existir en core/styles.py)"
+    )
+    visual_style_prompt: str = Field(
+        default="",
+        description="Fragmento de prompt en INGLÉS del estilo (snapshot para inmutabilidad del proyecto)"
+    )
+
     title: str = Field(description="Título sugerido y atractivo para el video")
     video_type: str = Field(default="long", description="Tipo de video: 'short' o 'long'")
     aspect_ratio: str = Field(default="16:9", description="Relación de aspecto: '9:16' o '16:9'")
@@ -156,43 +164,56 @@ def load_reverse_analysis() -> Optional[Dict[str, Any]]:
     return None
 
 
-def apply_prompt_safeguards(scenes: List[Dict[str, Any]], thumbnail_prompt: str, aspect_ratio: str) -> tuple[List[Dict[str, Any]], str]:
-    """Garantiza la presencia del estilo base, reglas de encuadre y aspect ratio sin duplicaciones."""
-    ratio_directive = "16:9 horizontal widescreen ratio" if aspect_ratio == "16:9" else "9:16 vertical ratio"
+def apply_prompt_safeguards(
+    scenes: List[Dict[str, Any]],
+    thumbnail_prompt: str,
+    aspect_ratio: str,
+    style_key: str
+) -> tuple[List[Dict[str, Any]], str]:
+    """Garantiza estilo, reglas de encuadre y aspect ratio sin duplicaciones."""
+    style_prompt = get_style_prompt(style_key)
+    bg_rules = get_style_background_rules(style_key)
+    # Detectar la "firma" del estilo (primeras palabras clave) para evitar duplicar
+    style_marker = style_prompt.split(",")[0].strip()[:40]
 
-    for scene in scenes:
-        layout = scene.get("layout_type", "full_art")
+    ratio_directive = (
+        "16:9 horizontal widescreen ratio" if aspect_ratio == "16:9"
+        else "9:16 vertical ratio"
+    )
 
-        if layout == "code_graphic":
-            scene["visual_prompt"] = None
-            continue
+    def _apply_to_prompt(prompt: str, layout: str) -> str:
+        prompt = (prompt or "").strip()
 
-        prompt = (scene.get("visual_prompt") or "").strip()
+        if style_marker.lower() not in prompt.lower():
+            prompt = f"{style_prompt} {prompt}"
 
-        if "Clean 2D vector cartoon" not in prompt:
-            prompt = f"{CHARACTER_STYLE} {prompt}"
+        if layout == "split_right" and "left 70%" not in prompt.lower():
+            prompt += (
+                ". Subject and main action framed strictly on the left 70% of the image, "
+                "the right 30% of the frame is an empty neutral wall or clean blurred "
+                "background with empty negative space."
+            )
 
-        if layout == "split_right":
-            if "left 70%" not in prompt.lower():
-                prompt += ". Subject and main action framed strictly on the left 70% of the image, the right 30% of the frame is an empty neutral wall or clean blurred background with empty negative space."
+        if bg_rules and bg_rules.lower() not in prompt.lower():
+            prompt += f", {bg_rules}"
 
-        if "completely clean" not in prompt.lower() and "uncluttered" not in prompt.lower():
-            prompt += f", {BG_BASE_RULES}"
+        if "completely clean" not in prompt.lower() and "no text" not in prompt.lower():
+            prompt += ", completely clean without any text, letters, or words"
 
         if ratio_directive.lower() not in prompt.lower():
             prompt += f", {ratio_directive}."
 
-        scene["visual_prompt"] = prompt
+        return prompt
 
-    th_prompt = thumbnail_prompt.strip()
-    if "Clean 2D vector cartoon" not in th_prompt:
-        th_prompt = f"{CHARACTER_STYLE} {th_prompt}"
+    for scene in scenes:
+        layout = scene.get("layout_type", "full_art")
+        if layout == "code_graphic":
+            scene["visual_prompt"] = None
+            continue
+        scene["visual_prompt"] = _apply_to_prompt(scene.get("visual_prompt", ""), layout)
 
-    if ratio_directive.lower() not in th_prompt.lower():
-        th_prompt += f", {ratio_directive}."
-
+    th_prompt = _apply_to_prompt(thumbnail_prompt, "full_art")
     return scenes, th_prompt
-
 
 # --- LLAMADA BASE A OPENROUTER ---
 
@@ -261,13 +282,15 @@ def generate_script_from_openrouter(
     aspect_ratio: str = "16:9",
     model: str = "google/gemini-3.7-flash",
     batch_size: int = 15,
-    language: str = TARGET_LANGUAGE
+    language: str = TARGET_LANGUAGE,
+    style_key: str = "cartoon_2d_cellshaded"
 ) -> Optional[ScriptManifest]:
     """Genera el guion dividiendo la tarea en Escaleta Global + Lotes para evitar desbordamiento de tokens."""
     topic = idea_data.get("topic", "")
     idea = idea_data.get("selected_idea", {})
     target_scenes = max(3, round(target_duration / 7.0))
     lang_name = LANGUAGE_NAMES.get(language.lower(), "SPANISH")
+    style_directive = build_style_directive(style_key)
 
     print(f"\n🧠 Iniciando generación de guion: {target_duration}s (~{target_scenes} escenas, {aspect_ratio}, idioma: {language.upper()}) vía {model}...")
 
@@ -287,7 +310,7 @@ REGLAS DE IDIOMA:
 
 REGLAS DE MINIATURA (THUMBNAIL):
 1. STRICT NO-TEXT RULE IN RAW IMAGE: The thumbnail_prompt raw image MUST be 100% clean of typography.
-2. CLEAN 2D VECTOR CARTOON STYLE: Saturated cell-shaded 2D style, high-contrast split backgrounds.
+2. {style_directive}
 3. TIGHT COMPOSITION: Medium close-up shot, key characters fill 80% frame near center.
 4. thumbnail_prompt: Prompt ultradetallado en INGLÉS.
 5. thumbnail_text: Texto de gancho en MAYÚSCULAS en {lang_name} (2-3 palabras máximo) o "" si no aplica.
@@ -332,6 +355,8 @@ Cantidad total de escenas requeridas: {target_scenes} escenas.
     # --------------------------------------------------------------------------
     all_scenes: List[Dict[str, Any]] = []
 
+    style_example = get_style_prompt(style_key).split(",")[0].strip()
+
     batch_system_prompt = f"""
 Eres un director de arte y guionista experto en videos educativos de economía y finanzas en estilo animación 2D vectorial limpia (cell-shaded).
 Generas un subconjunto de escenas específicas manteniendo absoluta continuidad narrativa con las escenas previas.
@@ -353,7 +378,7 @@ REGLAS DE CONTENIDO SUPERPUESTO (overlay_content):
 REGLAS DE PROMPT VISUAL ('visual_prompt'):
 Si layout_type NO es 'code_graphic', 'visual_prompt' DEBE estar escrito en INGLÉS y seguir la siguiente plantilla base:
 
-"Clean 2D vector cartoon illustration, cell-shaded style. Characters: Expressive 2D cartoon human figures with natural skin tones, clear facial features, classic hairstyles, and simple textured clothing. [DESCRIPCIÓN DE LA ACCIÓN Y ENTORNO], spacious uncluttered composition, soft depth of field, completely clean without any text, letters, or words, 16:9 horizontal widescreen ratio."
+"{get_style_prompt(style_key)} [DESCRIPCIÓN DE LA ACCIÓN Y ENTORNO], {get_style_background_rules(style_key)}, completely clean without any text, letters, or words, 16:9 horizontal widescreen ratio."
 
 Esquema JSON requerido para este lote:
 {{
@@ -362,7 +387,7 @@ Esquema JSON requerido para este lote:
       "scene_number": 1,
       "narration_text": "Texto exacto de locución en {lang_name}...",
       "layout_type": "full_art",
-      "visual_prompt": "Clean 2D vector cartoon illustration...",
+      "visual_prompt": "{style_example}, ...descripción de la acción...",
       "overlay_content": null,
       "is_interactive_cta": false
     }},
@@ -370,7 +395,7 @@ Esquema JSON requerido para este lote:
       "scene_number": 2,
       "narration_text": "Texto explicativo en {lang_name}...",
       "layout_type": "split_right",
-      "visual_prompt": "Clean 2D vector cartoon illustration...",
+      "visual_prompt": "{style_example}, ...descripción de la acción...",
       "overlay_content": {{
         "title": "FACTORES CLAVE",
         "bullets": ["Tasa de interés", "Inflación anual"]
@@ -417,13 +442,16 @@ Instrucciones: Devuelve el objeto JSON 'scenes' correspondiente EXCLUSIVAMENTE a
     # FASE 3: ENSAMBLAJE FINAL Y VERIFICACIÓN
     # --------------------------------------------------------------------------
     scenes, th_prompt = apply_prompt_safeguards(
-        all_scenes, 
-        outline_data.get("thumbnail_prompt", ""), 
-        aspect_ratio
+        all_scenes,
+        outline_data.get("thumbnail_prompt", ""),
+        aspect_ratio,
+        style_key,          # ← FALTABA
     )
 
     manifest_dict = {
         "language": language,
+        "visual_style": style_key,                          # ← NUEVO
+        "visual_style_prompt": get_style_prompt(style_key), # ← NUEVO (snapshot inmutable)
         "title": outline_data.get("title", idea.get("titulo", topic)),
         "video_type": video_type,
         "aspect_ratio": aspect_ratio,
@@ -530,6 +558,48 @@ def display_and_review_script(manifest: ScriptManifest) -> ScriptManifest:
 
     return ScriptManifest.model_validate(data)
 
+def _prompt_style_interactive() -> Optional[str]:
+    """
+    Pregunta al usuario qué estilo visual usar cuando:
+      - No se pasó --style por CLI, y
+      - El script se ejecuta en una terminal interactiva (TTY).
+    Retorna la clave del estilo, o None para que get_style_key() use el default.
+    """
+    import sys
+    if not sys.stdin.isatty():
+        return None
+
+    styles = list_available_styles()
+    print("\n" + "=" * 70)
+    print(" 🎨 SELECCIÓN DE ESTILO VISUAL")
+    print("=" * 70)
+    for i, (key, desc) in enumerate(styles.items(), 1):
+        default_marker = " [DEFAULT]" if key == {DEFAULT_STYLE_KEY} else ""
+        print(f"  [{i}] {key}{default_marker}")
+        print(f"      {desc}")
+    print("=" * 70)
+
+    choice = input(
+        f"\n👉 Elige estilo por número o clave "
+        f"[ENTER = default 'cartoon_2d_cellshaded']: "
+    ).strip()
+
+    if not choice:
+        return None
+
+    if choice.isdigit():
+        keys = list(styles.keys())
+        idx = int(choice) - 1
+        if 0 <= idx < len(keys):
+            return keys[idx]
+        print(f"⚠️ Número fuera de rango. Usando default.")
+        return None
+
+    if choice in styles:
+        return choice
+
+    print(f"⚠️ Estilo '{choice}' no reconocido. Usando default.")
+    return None
 
 # --- FUNCIÓN PRINCIPAL INTEGRADA ---
 
@@ -541,12 +611,17 @@ def generate_script(
     aspect_ratio: str = "16:9",
     model: str = "google/gemini-3.7-flash",
     project_dir: Optional[str] = None,
-    language: str = TARGET_LANGUAGE
+    language: str = TARGET_LANGUAGE,
+    style: Optional[str] = None,   # NUEVO
 ) -> Dict[str, Any]:
     """Flujo completo de generación, aprobación y almacenamiento del guion."""
     print("\n" + "=" * 85)
     print(" 🎬 GENERADOR DE GUIONES PARA FACELESS ENGINE")
     print("=" * 85)
+
+    style_key = get_style_key(style or _prompt_style_interactive())
+
+    print(f"🎨 Estilo visual seleccionado: '{style_key}' — {get_style_description(style_key)}")
 
     idea_data = load_selected_idea()
 
@@ -572,7 +647,8 @@ def generate_script(
         video_type=video_type,
         aspect_ratio=aspect_ratio,
         model=model,
-        language=language
+        language=language,
+        style_key=style_key,
     )
 
     if not manifest:
@@ -610,6 +686,36 @@ if __name__ == "__main__":
     parser.add_argument("--ratio", type=str, default="16:9", choices=["9:16", "16:9"], help="Aspect Ratio")
     parser.add_argument("--model", type=str, default="google/gemini-3.7-flash", help="Modelo de OpenRouter")
     parser.add_argument("--lang", type=str, default=TARGET_LANGUAGE, help="Idioma objetivo del video (es, en, pt)")
+    
+    parser.add_argument(
+    "--style",
+    type=str,
+    default=None,
+    help=f"Clave del estilo visual. Disponibles: {', '.join(list_available_styles().keys())}"
+)
+
+    def _prompt_style_interactive() -> Optional[str]:
+        """Pregunta al usuario qué estilo usar si corre en TTY y no se pasó --style."""
+        import sys
+        if not sys.stdin.isatty():
+            return None
+        styles = list_available_styles()
+        print("\n🎨 Estilos visuales disponibles:")
+        for i, (k, desc) in enumerate(styles.items(), 1):
+            print(f"  [{i}] {k}")
+            print(f"      {desc}")
+        choice = input(f"\nElige estilo por número o clave [ENTER = default]: ").strip()
+        if not choice:
+            return None
+        if choice.isdigit():
+            keys = list(styles.keys())
+            idx = int(choice) - 1
+        if 0 <= idx < len(keys):
+            return keys[idx]
+        if choice in styles:
+            return choice
+        print(f"⚠️ Estilo '{choice}' no reconocido. Usando default.")
+        return None
 
     args = parser.parse_args()
     generate_script(
@@ -617,5 +723,8 @@ if __name__ == "__main__":
         video_type=args.type,
         aspect_ratio=args.ratio,
         model=args.model,
-        language=args.lang
+        language=args.lang,
+        style=args.style,        # ← FALTABA
     )
+
+    
