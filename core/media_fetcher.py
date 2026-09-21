@@ -161,7 +161,7 @@ def apply_split_right_overlay(image_path: str, overlay_content: Dict[str, Any]) 
                 radius=18,
                 fill=(15, 23, 42, 225),
                 outline=(51, 65, 85, 255),
-                width=3
+                width=0 # sin borde (antes 3)
             )
 
             img = Image.alpha_composite(img, card_overlay)
@@ -528,7 +528,7 @@ def render_code_graphic_card(
 ) -> None:
     """
     Renderiza una tarjeta visual de texto/código (layout 'code_graphic')
-    con tipografía de gran tamaño y contenido centrado vertical y horizontalmente.
+    como una página blanca limpia, con el contenido centrado y en tinta oscura.
     """
     if aspect_ratio == "9:16":
         width, height = 1080, 1920
@@ -540,34 +540,16 @@ def render_code_graphic_card(
         width, height = 1920, 1080
         max_title_chars = 28
         max_bullet_chars = 36
-        font_size_title = max(56, int(height * 0.065))   # ~70px en 1080p
-        font_size_bullets = max(40, int(height * 0.045)) # ~48px en 1080p
+        font_size_title = max(56, int(height * 0.065))
+        font_size_bullets = max(40, int(height * 0.045))
 
-    img = Image.new('RGB', (width, height), color=(15, 23, 42))
+    # Lienzo blanco puro, sin bordes ni marcos
+    INK = (15, 23, 42)          # slate-900, tinta principal
+    ACCENT = (250, 204, 21)     # amarillo de acento solo para el título
+
+    # img = Image.new('RGB', (width, height), color=(255, 255, 255))
+    img = Image.new('RGB', (width, height), color=(186, 171, 156))
     draw = ImageDraw.Draw(img)
-
-    # Margen del contenedor central
-    card_left = int(width * 0.08)
-    card_top = int(height * 0.10)
-    card_right = int(width * 0.92)
-    card_bottom = int(height * 0.90)
-
-    # Ventana central Slate
-    draw.rounded_rectangle(
-        [card_left, card_top, card_right, card_bottom],
-        radius=24,
-        fill=(30, 41, 59),
-        outline=(51, 65, 85),
-        width=3
-    )
-
-    # Puntos decorativos estilo ventana / terminal (Top-Left)
-    dot_y = card_top + int(height * 0.04)
-    dot_x_start = card_left + int(width * 0.03)
-    dot_radius = max(6, int(height * 0.009))
-    for i, color in enumerate([(239, 68, 68), (245, 158, 11), (34, 197, 94)]):
-        cx = dot_x_start + (i * dot_radius * 3.5)
-        draw.ellipse([cx - dot_radius, dot_y - dot_radius, cx + dot_radius, dot_y + dot_radius], fill=color)
 
     # Carga de fuentes
     try:
@@ -584,9 +566,8 @@ def render_code_graphic_card(
     title = overlay_content.get("title") if overlay_content else f"ESCENA {scene_num}"
     bullets = overlay_content.get("bullets", []) if overlay_content else []
 
-    # Preparar texto envuelto
     wrapped_title_lines = textwrap.wrap(title.upper(), width=max_title_chars) if title else []
-    
+
     wrapped_bullet_items = []
     if bullets:
         for b in bullets:
@@ -594,47 +575,39 @@ def render_code_graphic_card(
 
     # --- CÁLCULO DE ALTURA TOTAL PARA CENTRADO VERTICAL ---
     line_h_title = int(font_size_title * 1.35)
-    line_h_bullet = int(font_size_bullets * 1.45)
-    sep_space = int(height * 0.04)
+    line_h_bullet = int(font_size_bullets * 1.55)
+    sep_space = int(height * 0.06)
 
     total_h = 0
     if wrapped_title_lines:
         total_h += (len(wrapped_title_lines) * line_h_title) + sep_space
-
     for item_lines in wrapped_bullet_items:
-        total_h += (len(item_lines) * line_h_bullet) + int(height * 0.02)
+        total_h += (len(item_lines) * line_h_bullet) + int(height * 0.025)
 
-    header_dots_h = int(height * 0.06)
-    content_area_top = card_top + header_dots_h
-    content_area_h = card_bottom - content_area_top
+    # Área útil de la "página" (márgenes generosos, sin marcos)
+    page_left = int(width * 0.10)
+    page_right = int(width * 0.90)
+    page_top = int(height * 0.12)
+    page_bottom = int(height * 0.88)
+    content_area_h = page_bottom - page_top
 
-    # Punto Y inicial centrado
-    curr_y = content_area_top + max(20, (content_area_h - total_h) // 2)
-    center_x = (card_left + card_right) // 2
+    curr_y = page_top + max(0, (content_area_h - total_h) // 2)
+    center_x = (page_left + page_right) // 2
 
-    # 1. RENDERIZAR TÍTULO (Centrado)
+    # 1. TÍTULO (centrado horizontal, con acento de color)
     if wrapped_title_lines:
         for line in wrapped_title_lines:
             draw.text(
                 (center_x, curr_y + (line_h_title // 2)),
                 line,
                 font=title_font,
-                fill=(250, 204, 21),
+                fill=ACCENT,
                 anchor="mm"
             )
             curr_y += line_h_title
+        curr_y += sep_space
 
-        # Línea separadora centrada (70% del ancho interno)
-        curr_y += int(sep_space * 0.2)
-        sep_w = int((card_right - card_left) * 0.7)
-        draw.line(
-            [(center_x - (sep_w // 2), curr_y), (center_x + (sep_w // 2), curr_y)],
-            fill=(71, 85, 105),
-            width=3
-        )
-        curr_y += int(sep_space * 0.8)
-
-    # 2. RENDERIZAR BULLETS (Bloque centrado en la pantalla)
+    # 2. BULLETS (bloque centrado, tinta oscura)
     if wrapped_bullet_items:
         max_line_len_px = 0
         for item_lines in wrapped_bullet_items:
@@ -647,8 +620,7 @@ def render_code_graphic_card(
                 if w > max_line_len_px:
                     max_line_len_px = w
 
-        # X de inicio para que el bloque completo quede centrado
-        bullet_block_left = max(card_left + 40, int(center_x - (max_line_len_px / 2)))
+        bullet_block_left = max(page_left, int(center_x - (max_line_len_px / 2)))
 
         for item_lines in wrapped_bullet_items:
             for idx, line in enumerate(item_lines):
@@ -657,14 +629,14 @@ def render_code_graphic_card(
                     (bullet_block_left + indent, curr_y),
                     line,
                     font=bullet_font,
-                    fill=(241, 245, 249)
+                    fill=INK
                 )
                 curr_y += line_h_bullet
-            curr_y += int(height * 0.02)
+            curr_y += int(height * 0.025)
 
     fmt = "PNG" if output_path.lower().endswith(".png") else "JPEG"
     img.save(output_path, fmt, quality=95)
-    print(f"   🎨 Tarjeta 'code_graphic' centrada y ampliada: {output_path}")
+    print(f"   🎨 Tarjeta 'code_graphic' estilo página blanca: {output_path}")
 
 def process_scene_media(
     project_dir: str,

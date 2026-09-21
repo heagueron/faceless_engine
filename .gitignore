@@ -15,3 +15,5 @@ projects/
 
 # Otros
 .DS_Store
+.continue/
+core/script_critic.py
