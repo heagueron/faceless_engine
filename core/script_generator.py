@@ -93,6 +93,11 @@ class ScriptManifest(BaseModel):
         description="Fragmento de prompt en INGLÉS del estilo (snapshot para inmutabilidad del proyecto)"
     )
 
+    allowed_layouts: List[str] = Field(
+        default_factory=lambda: ["full_art", "split_right", "code_graphic"],
+        description="Layouts permitidos por el estilo en el momento de generación (snapshot)."
+    )
+
     title: str = Field(description="Título sugerido y atractivo para el video")
     video_type: str = Field(default="long", description="Tipo de video: 'short' o 'long'")
     aspect_ratio: str = Field(default="16:9", description="Relación de aspecto: '9:16' o '16:9'")
@@ -164,6 +169,58 @@ def load_reverse_analysis() -> Optional[Dict[str, Any]]:
     return None
 
 
+def _build_layout_rules(style_key: str) -> str:
+    """
+    Genera el bloque de reglas de layout_type para el batch_system_prompt,
+    respetando los 'allowed_layouts' declarados por el estilo en styles.py.
+    Si el estilo no declara el campo, se asumen los 3 layouts clásicos.
+    """
+    style = STYLE_PROMPTS[get_style_key(style_key)]
+    allowed = style.get("allowed_layouts", ["full_art", "split_right", "code_graphic"])
+
+    all_descriptions = {
+        "full_art": (
+            "layout_type = 'full_art' (DEFAULT): Para la mayoría de las escenas narrativas "
+            "o conceptuales. Ocupa el 100% de la pantalla sin texto."
+        ),
+        "split_right": (
+            "layout_type = 'split_right': Cuando se expliquen 2-3 puntos clave o cifras "
+            "importantes que requieran apoyo visual escrito. La IA generará la imagen "
+            "dejando el 30% derecho libre para una tarjeta de texto superpuesta por Python."
+        ),
+        "code_graphic": (
+            "layout_type = 'code_graphic': ÚNICAMENTE para tablas comparativas complejas, "
+            "gráficos de barras o cifras gigantes. La imagen NO se pide a la IA "
+            "(visual_prompt = null), sino que se dibuja 100% por código en Python."
+        ),
+    }
+
+    # Caso extremo: un solo layout permitido
+    if len(allowed) == 1:
+        only = allowed[0]
+        desc = all_descriptions.get(only, "")
+        return (
+            f"REGLA CRÍTICA DE LAYOUT — ÚNICA OPCIÓN VÁLIDA:\n"
+            f"Para este estilo SOLO se permite layout_type = '{only}'. "
+            f"NINGUNA otra opción es válida. TODAS las escenas DEBEN usar '{only}'.\n"
+            f"{desc}"
+        )
+
+    # Caso normal: varios layouts
+    lines = ["REGLAS ESTRICTAS DE LAYOUT (layout_type):"]
+    for i, layout in enumerate(allowed, 1):
+        desc = all_descriptions.get(layout, "")
+        if desc:
+            lines.append(f"{i}. {desc}")
+    return "\n".join(lines)
+
+
+def _has_overlay_layouts(style_key: str) -> bool:
+    """Indica si el estilo permite algún layout que use overlay_content."""
+    style = STYLE_PROMPTS[get_style_key(style_key)]
+    allowed = style.get("allowed_layouts", ["full_art", "split_right", "code_graphic"])
+    return any(l in allowed for l in ("split_right", "code_graphic"))
+
 def apply_prompt_safeguards(
     scenes: List[Dict[str, Any]],
     thumbnail_prompt: str,
@@ -175,6 +232,11 @@ def apply_prompt_safeguards(
     bg_rules = get_style_background_rules(style_key)
     # Detectar la "firma" del estilo (primeras palabras clave) para evitar duplicar
     style_marker = style_prompt.split(",")[0].strip()[:40]
+
+    # Leer layouts permitidos por el estilo (fallback: los 3 clásicos)
+    style_meta = STYLE_PROMPTS[get_style_key(style_key)]
+    allowed_layouts = style_meta.get("allowed_layouts", ["full_art", "split_right", "code_graphic"])
+    default_layout = allowed_layouts[0]
 
     ratio_directive = (
         "16:9 horizontal widescreen ratio" if aspect_ratio == "16:9"
@@ -207,6 +269,19 @@ def apply_prompt_safeguards(
 
     for scene in scenes:
         layout = scene.get("layout_type", "full_art")
+        
+        # Defensa: forzar layout permitido si el manifest trae uno prohibido
+        if layout not in allowed_layouts:
+            print(
+                f"   ⚠️ Escena {scene.get('scene_number')}: layout '{layout}' "
+                f"no permitido por el estilo '{style_key}'. Forzando '{default_layout}'."
+            )
+            scene["layout_type"] = default_layout
+            layout = default_layout
+            # Si el estilo no permite code_graphic, limpiar overlay_content
+            if default_layout == "full_art":
+                scene["overlay_content"] = None
+
         if layout == "code_graphic":
             scene["visual_prompt"] = None
             continue
@@ -357,6 +432,46 @@ Cantidad total de escenas requeridas: {target_scenes} escenas.
 
     style_example = get_style_prompt(style_key).split(",")[0].strip()
 
+    layout_rules_block = _build_layout_rules(style_key)
+
+    if _has_overlay_layouts(style_key):
+        overlay_rules_block = (
+            "REGLAS DE CONTENIDO SUPERPUESTO (overlay_content):\n"
+            "- Si layout_type es 'split_right' o 'code_graphic', DEBES completar "
+            "'overlay_content' con 'title' (MAYÚSCULAS) y/o 'bullets' "
+            "(lista de 1 a 3 ítems breves).\n"
+            "- Si layout_type es 'full_art', 'overlay_content' debe ser null."
+        )
+    else:
+        overlay_rules_block = (
+            "REGLAS DE CONTENIDO SUPERPUESTO (overlay_content):\n"
+            "- Este estilo SOLO permite 'full_art', por lo que 'overlay_content' "
+            "SIEMPRE debe ser null en TODAS las escenas."
+        )
+
+    if _has_overlay_layouts(style_key):
+        example_scene_2 = f"""{{
+            "scene_number": 2,
+            "narration_text": "Texto explicativo en {lang_name}...",
+            "layout_type": "split_right",
+            "visual_prompt": "{style_example}, ...descripción de la acción...",
+            "overlay_content": {{
+                "title": "FACTORES CLAVE",
+                "bullets": ["Tasa de interés", "Inflación anual"]
+            }},
+            "is_interactive_cta": false
+        }}"""
+    else:
+        example_scene_2 = f"""{{
+            "scene_number": 2,
+            "narration_text": "Texto explicativo en {lang_name}...",
+            "layout_type": "full_art",
+            "visual_prompt": "{style_example}, ...descripción de la acción...",
+            "overlay_content": null,
+            "is_interactive_cta": false
+        }}"""
+
+
     batch_system_prompt = f"""
 Eres un director de arte y guionista experto en videos educativos de economía y finanzas en estilo animación 2D vectorial limpia (cell-shaded).
 Generas un subconjunto de escenas específicas manteniendo absoluta continuidad narrativa con las escenas previas.
@@ -366,14 +481,9 @@ REGLAS STRICTAS DE IDIOMA:
 2. 'overlay_content' ('title' and 'bullets') MUST be written strictly in {lang_name}.
 3. 'visual_prompt' MUST ALWAYS be written strictly in ENGLISH (regardless of target language).
 
-REGLAS ESTRICTAS DE LAYOUT (layout_type):
-1. layout_type = 'full_art' (DEFAULT): Para la mayoría de las escenas narrativas o conceptuales. Ocupa el 100% de la pantalla sin texto.
-2. layout_type = 'split_right': Cuando se expliquen 2-3 puntos clave o cifras importantes que requieran apoyo visual escrito. La IA generará la imagen dejando el 30% derecho libre para una tarjeta de texto superpuesta por Python.
-3. layout_type = 'code_graphic': ÚNICAMENTE para tablas comparativas complejas, gráficos de barras o cifras gigantes. La imagen NO se pide a la IA (visual_prompt = null), sino que se dibuja 100% por código en Python.
+{layout_rules_block}
 
-REGLAS DE CONTENIDO SUPERPUESTO (overlay_content):
-- Si layout_type es 'split_right' o 'code_graphic', DEBES completar 'overlay_content' con 'title' (MAYÚSCULAS) y/o 'bullets' (lista de 1 a 3 ítems breves).
-- Si layout_type es 'full_art', 'overlay_content' debe ser null.
+{overlay_rules_block}
 
 REGLAS DE PROMPT VISUAL ('visual_prompt'):
 Si layout_type NO es 'code_graphic', 'visual_prompt' DEBE estar escrito en INGLÉS y seguir la siguiente plantilla base:
@@ -386,24 +496,15 @@ Esquema JSON requerido para este lote:
     {{
       "scene_number": 1,
       "narration_text": "Texto exacto de locución en {lang_name}...",
-      "layout_type": "full_art",
+      "layout_type": "{STYLE_PROMPTS[style_key].get('allowed_layouts', ['full_art'])[0]}",
       "visual_prompt": "{style_example}, ...descripción de la acción...",
       "overlay_content": null,
       "is_interactive_cta": false
     }},
-    {{
-      "scene_number": 2,
-      "narration_text": "Texto explicativo en {lang_name}...",
-      "layout_type": "split_right",
-      "visual_prompt": "{style_example}, ...descripción de la acción...",
-      "overlay_content": {{
-        "title": "FACTORES CLAVE",
-        "bullets": ["Tasa de interés", "Inflación anual"]
-      }},
-      "is_interactive_cta": false
-    }}
+    {example_scene_2}
   ]
 }}
+
 """
 
     for start_scene in range(1, target_scenes + 1, batch_size):
@@ -452,6 +553,9 @@ Instrucciones: Devuelve el objeto JSON 'scenes' correspondiente EXCLUSIVAMENTE a
         "language": language,
         "visual_style": style_key,                          # ← NUEVO
         "visual_style_prompt": get_style_prompt(style_key), # ← NUEVO (snapshot inmutable)
+        "allowed_layouts": STYLE_PROMPTS[style_key].get(
+            "allowed_layouts", ["full_art", "split_right", "code_graphic"]
+        ),
         "title": outline_data.get("title", idea.get("titulo", topic)),
         "video_type": video_type,
         "aspect_ratio": aspect_ratio,
@@ -559,12 +663,6 @@ def display_and_review_script(manifest: ScriptManifest) -> ScriptManifest:
     return ScriptManifest.model_validate(data)
 
 def _prompt_style_interactive() -> Optional[str]:
-    """
-    Pregunta al usuario qué estilo visual usar cuando:
-      - No se pasó --style por CLI, y
-      - El script se ejecuta en una terminal interactiva (TTY).
-    Retorna la clave del estilo, o None para que get_style_key() use el default.
-    """
     import sys
     if not sys.stdin.isatty():
         return None
@@ -574,18 +672,18 @@ def _prompt_style_interactive() -> Optional[str]:
     print(" 🎨 SELECCIÓN DE ESTILO VISUAL")
     print("=" * 70)
     for i, (key, desc) in enumerate(styles.items(), 1):
-        default_marker = " [DEFAULT]" if key == {DEFAULT_STYLE_KEY} else ""
+        default_marker = " [DEFAULT]" if key == DEFAULT_STYLE_KEY else ""
         print(f"  [{i}] {key}{default_marker}")
         print(f"      {desc}")
     print("=" * 70)
 
     choice = input(
         f"\n👉 Elige estilo por número o clave "
-        f"[ENTER = default 'cartoon_2d_cellshaded']: "
+        f"[ENTER = default '{DEFAULT_STYLE_KEY}']: "
     ).strip()
 
     if not choice:
-        return None
+        return DEFAULT_STYLE_KEY   # ← explícito, no None
 
     if choice.isdigit():
         keys = list(styles.keys())
@@ -593,13 +691,13 @@ def _prompt_style_interactive() -> Optional[str]:
         if 0 <= idx < len(keys):
             return keys[idx]
         print(f"⚠️ Número fuera de rango. Usando default.")
-        return None
+        return DEFAULT_STYLE_KEY
 
     if choice in styles:
         return choice
 
     print(f"⚠️ Estilo '{choice}' no reconocido. Usando default.")
-    return None
+    return DEFAULT_STYLE_KEY
 
 # --- FUNCIÓN PRINCIPAL INTEGRADA ---
 
@@ -679,6 +777,7 @@ def generate_script(
     return manifest_data
 
 
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generador de Guiones Faceless Engine")
     parser.add_argument("--duration", type=int, default=600, help="Duración objetivo en segundos")
@@ -686,36 +785,12 @@ if __name__ == "__main__":
     parser.add_argument("--ratio", type=str, default="16:9", choices=["9:16", "16:9"], help="Aspect Ratio")
     parser.add_argument("--model", type=str, default="google/gemini-3.7-flash", help="Modelo de OpenRouter")
     parser.add_argument("--lang", type=str, default=TARGET_LANGUAGE, help="Idioma objetivo del video (es, en, pt)")
-    
     parser.add_argument(
-    "--style",
-    type=str,
-    default=None,
-    help=f"Clave del estilo visual. Disponibles: {', '.join(list_available_styles().keys())}"
-)
-
-    def _prompt_style_interactive() -> Optional[str]:
-        """Pregunta al usuario qué estilo usar si corre en TTY y no se pasó --style."""
-        import sys
-        if not sys.stdin.isatty():
-            return None
-        styles = list_available_styles()
-        print("\n🎨 Estilos visuales disponibles:")
-        for i, (k, desc) in enumerate(styles.items(), 1):
-            print(f"  [{i}] {k}")
-            print(f"      {desc}")
-        choice = input(f"\nElige estilo por número o clave [ENTER = default]: ").strip()
-        if not choice:
-            return None
-        if choice.isdigit():
-            keys = list(styles.keys())
-            idx = int(choice) - 1
-        if 0 <= idx < len(keys):
-            return keys[idx]
-        if choice in styles:
-            return choice
-        print(f"⚠️ Estilo '{choice}' no reconocido. Usando default.")
-        return None
+        "--style",
+        type=str,
+        default=None,
+        help=f"Clave del estilo visual. Disponibles: {', '.join(list_available_styles().keys())}"
+    )
 
     args = parser.parse_args()
     generate_script(
@@ -724,7 +799,7 @@ if __name__ == "__main__":
         aspect_ratio=args.ratio,
         model=args.model,
         language=args.lang,
-        style=args.style,        # ← FALTABA
+        style=args.style,
     )
 
     

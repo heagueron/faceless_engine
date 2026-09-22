@@ -11,6 +11,7 @@ STYLE_PROMPTS: Dict[str, Dict[str, Any]] = {
         ),
         "background_rules": "pure solid white background, no gradients, no texture",
         "text_safe": True,
+        "allowed_layouts": ["full_art", "split_right", "code_graphic"],
     },
     "flat_vector": {
         "description": "Ilustración vectorial plana moderna, colores vibrantes, estilo corporativo.",
@@ -20,6 +21,7 @@ STYLE_PROMPTS: Dict[str, Dict[str, Any]] = {
         ),
         "background_rules": "solid flat color background, no gradients, uncluttered",
         "text_safe": True,
+        "allowed_layouts": ["full_art", "split_right", "code_graphic"],
     },
     "cartoon_2d_cellshaded": {
         "description": "Cartoon 2D con cell-shading (estilo actual del proyecto).",
@@ -30,6 +32,7 @@ STYLE_PROMPTS: Dict[str, Dict[str, Any]] = {
         ),
         "background_rules": "spacious uncluttered composition, soft depth of field",
         "text_safe": False,
+        "allowed_layouts": ["full_art", "split_right", "code_graphic"],
     },
     "cyberpunk": {
         "description": "Estética cyberpunk con neones azul/magenta y fondos oscuros.",
@@ -39,6 +42,7 @@ STYLE_PROMPTS: Dict[str, Dict[str, Any]] = {
         ),
         "background_rules": "dark moody background with neon accents, no daylight",
         "text_safe": True,
+        "allowed_layouts": ["full_art", "split_right", "code_graphic"],
     },
     "photorealistic": {
         "description": "Fotorrealismo cinematográfico, iluminación natural, alta nitidez.",
@@ -48,6 +52,7 @@ STYLE_PROMPTS: Dict[str, Dict[str, Any]] = {
         ),
         "background_rules": "clean background, natural environment, no artificial elements",
         "text_safe": True,
+        "allowed_layouts": ["full_art", "split_right", "code_graphic"],
     },
     "watercolor": {
         "description": "Acuarela artística con texturas suaves y colores pastel.",
@@ -57,6 +62,67 @@ STYLE_PROMPTS: Dict[str, Dict[str, Any]] = {
         ),
         "background_rules": "textured watercolor paper background, soft edges",
         "text_safe": False,
+        "allowed_layouts": ["full_art", "split_right", "code_graphic"],
+    },
+    "doodle_cartoon_landscape": {
+        "description": (
+            "Monigote cartoon expresivo con cabeza grande sobre fondo de paisaje "
+            "semi-pintado estilo gouache digital, iluminación cálida cinematográfica."
+        ),
+        "prompt": (
+            "Expressive cartoon doodle character with oversized round head, "
+            "minimal facial features (two black dot eyes, thin curved eyebrows, "
+            "simple curved smile line, no defined nose), classic hairstyle, "
+            "thin stick-like arms and legs drawn as "
+            "bold black outlines, simple flat-colored solid clothe, rounded mitten "
+            "hands. Bold clean black outline around the entire character, no internal "
+            "shading, flat solid colors. "
+            "Background: warm cinematic atmospheric lighting "
+        
+        ),
+        "background_rules": (
+            "semi-painted landscape with visible brush textures and warm atmospheric lighting, "
+            "character drawn with bold black outlines and flat solid colors, "
+            "clear visual hierarchy between character (outlined) and background (painterly)"
+        ),
+        "text_safe": True,
+        "allowed_layouts": ["full_art", "split_right", "code_graphic"],
+    },
+
+    "doodle_cartoon_lite": {
+        "description": (
+            "Monigote cartoon expresivo con cabeza grande sobre fondo de paisaje "
+            "semi-pintado estilo gouache digital, iluminación cálida cinematográfica."
+        ),
+        "prompt": (
+            "cartoon doodle classic hairstyle, "
+ 
+        ),
+        "background_rules": (
+            "semi-painted landscape with visible brush textures and warm atmospheric lighting, "
+        ),
+        "text_safe": False,
+        "allowed_layouts": ["full_art", "split_right", "code_graphic"],
+    },
+
+    "stickman_cinematic_2d": {
+        "description": (
+            "Personaje doodle de cabeza blanca y guantes estilo clásico con ropa detallada, integrado en fondos cinemáticos de animación 2D "
+        ),
+        "prompt": (
+            "A frame from a high-end 2D animated feature film. "
+            "The main character is a hybrid doodle stickman: a smooth white spherical head with simple expressive black dot eyes, thin eyebrows and mouth, "
+            "classic white 4-finger cartoon gloves, white cartoon shoes, and thin black stick-figure legs. "
+            "The character is wearing detailed, stylized 2D clothing fully appropriate for the context of the scene."
+ 
+        ),
+        "background_rules": (
+            "The backdrop is a rich, hand-painted 2D animated film background with warm atmospheric lighting, "
+            "volumetric light rays, detailed textures, and cinematic depth of field. "
+            "Cohesive blending between the cartoon character features and the painterly background environment."
+        ),
+        "text_safe": True,
+        "allowed_layouts": ["full_art"],
     },
 }
 
