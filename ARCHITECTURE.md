@@ -168,6 +168,22 @@ faceless_engine/
 - **Efecto Ken Burns:** Movimiento suave de cámara alternado (Zoom-In en escenas impares, Zoom-Out en escenas pares) aplicado en MoviePy para mantener el dinamismo visual.
 - **Stateful Batching:** Los videos largos dividen la generación del guion en: (1) Escaleta Maestra global y (2) Lotes de escenas con contexto previo para evitar desbordamiento de ventana de contexto en el LLM.
 
+
+### Fuentes por Estilo (`visual_style_fonts`)
+
+Cada estilo en `core/styles.py` puede declarar opcionalmente un campo `fonts` con
+dos claves: `title` y `body`. Los nombres de archivo son relativos a
+`assets/fonts/` en la raíz del proyecto.
+
+```python
+"cartoon_2d_cellshaded": {
+    # ... otros campos
+    "fonts": {
+        "title": "PatrickHand-Regular.ttf",
+        "body": "PatrickHand-Regular.ttf",
+    },
+    "allowed_layouts": ["full_art", "split_right", "code_graphic"],
+},
 ---
 
 ## 6. Common Tasks

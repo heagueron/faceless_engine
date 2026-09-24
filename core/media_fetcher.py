@@ -11,8 +11,14 @@ from dotenv import load_dotenv
 from PIL import Image, ImageDraw, ImageFont
 
 from core.config import get_language_directive
+from core.styles import get_style_fonts, GLOBAL_FALLBACK_FONT
 
 load_dotenv()
+
+# --- RUTAS DE FUENTES ---
+# La raíz del proyecto es el directorio padre de core/ (donde vive este archivo).
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_FONTS_DIR = os.path.join(_PROJECT_ROOT, "assets", "fonts")
 
 try:
     import fal_client
@@ -98,6 +104,30 @@ def enforce_style_in_prompt(prompt: str, manifest: Dict[str, Any]) -> str:
         prompt = f"{style_prompt} {prompt}"
     return prompt
 
+def load_font(font_filename: str, size: int) -> ImageFont.FreeTypeFont:
+    """
+    Carga una fuente desde assets/fonts/ con fallback en cascada:
+      1. La fuente solicitada en assets/fonts/
+      2. El fallback global (DejaVu) en assets/fonts/
+      3. El fallback global del sistema (Pillow buscará en las rutas estándar)
+      4. La fuente por defecto de Pillow (último recurso)
+    """
+    candidates = [
+        os.path.join(_FONTS_DIR, font_filename),
+        os.path.join(_FONTS_DIR, GLOBAL_FALLBACK_FONT),
+        GLOBAL_FALLBACK_FONT,  # Pillow buscará en /usr/share/fonts, ~/.fonts, etc.
+    ]
+
+    for candidate in candidates:
+        try:
+            return ImageFont.truetype(candidate, size)
+        except (IOError, OSError):
+            continue
+
+    # Último recurso
+    print(f"   ⚠️ No se pudo cargar '{font_filename}' ni el fallback. Usando fuente por defecto de Pillow.")
+    return ImageFont.load_default()
+
 def wrap_text_by_pixel_width(text: str, font: ImageFont.FreeTypeFont, max_width_px: int) -> List[str]:
     """
     Enuelve el texto midiendo el ancho real en píxeles de cada línea usando la fuente dada.
@@ -133,7 +163,11 @@ def wrap_text_by_pixel_width(text: str, font: ImageFont.FreeTypeFont, max_width_
 
     return lines
 
-def apply_split_right_overlay(image_path: str, overlay_content: Dict[str, Any]) -> None:
+def apply_split_right_overlay(
+    image_path: str,
+    overlay_content: Dict[str, Any],
+    fonts: Optional[Dict[str, str]] = None,
+) -> None:
     if not overlay_content or not os.path.exists(image_path):
         return
 
@@ -142,6 +176,9 @@ def apply_split_right_overlay(image_path: str, overlay_content: Dict[str, Any]) 
 
     if not title and not bullets:
         return
+
+    if fonts is None:
+        fonts = {"title": GLOBAL_FALLBACK_FONT, "body": GLOBAL_FALLBACK_FONT}
 
     try:
         with Image.open(image_path) as base_img:
@@ -167,19 +204,13 @@ def apply_split_right_overlay(image_path: str, overlay_content: Dict[str, Any]) 
             img = Image.alpha_composite(img, card_overlay)
             draw = ImageDraw.Draw(img)
 
+
             font_size_title = max(24, int(height * 0.045))
             font_size_bullets = max(18, int(height * 0.032))
 
-            try:
-                title_font = ImageFont.truetype("DejaVuSans-Bold.ttf", font_size_title)
-                bullet_font = ImageFont.truetype("DejaVuSans.ttf", font_size_bullets)
-            except IOError:
-                try:
-                    title_font = ImageFont.truetype("arial.ttf", font_size_title)
-                    bullet_font = ImageFont.truetype("arial.ttf", font_size_bullets)
-                except IOError:
-                    title_font = ImageFont.load_default()
-                    bullet_font = ImageFont.load_default()
+            title_font = load_font(fonts["title"], font_size_title)
+            bullet_font = load_font(fonts["body"], font_size_bullets)
+
 
             padding_x = int(width * 0.02)
             padding_y = int(height * 0.04)
@@ -263,7 +294,6 @@ def create_fallback_image(output_path: str, scene_num: int, text: str, aspect_ra
     
     fmt = "PNG" if output_path.lower().endswith(".png") else "JPEG"
     img.save(output_path, fmt, quality=90)
-
 
 def generate_image_via_openrouter(
     prompt: str,
@@ -367,7 +397,6 @@ def generate_image_via_openrouter(
 
     return False
 
-
 def generate_image_via_fal(
     prompt: str,
     output_path: str,
@@ -449,7 +478,6 @@ def generate_image_via_fal(
 
     return False
 
-
 def is_valid_image_file(path: str) -> bool:
     """Verifica si un archivo existe y es una imagen válida de tamaño > 100 bytes."""
     if not os.path.exists(path):
@@ -462,7 +490,6 @@ def is_valid_image_file(path: str) -> bool:
         return True
     except Exception:
         return False
-
 
 def process_thumbnail(
     project_dir: str,
@@ -524,8 +551,13 @@ def render_code_graphic_card(
     output_path: str,
     scene_num: int,
     overlay_content: Optional[Dict[str, Any]],
-    aspect_ratio: str = "16:9"
+    aspect_ratio: str = "16:9",
+    fonts: Optional[Dict[str, str]] = None
 ) -> None:
+    
+    if fonts is None:
+        fonts = {"title": GLOBAL_FALLBACK_FONT, "body": GLOBAL_FALLBACK_FONT}
+    
     """
     Renderiza una tarjeta visual de texto/código (layout 'code_graphic')
     como una página blanca limpia, con el contenido centrado y en tinta oscura.
@@ -544,24 +576,16 @@ def render_code_graphic_card(
         font_size_bullets = max(40, int(height * 0.045))
 
     # Lienzo blanco puro, sin bordes ni marcos
-    INK = (15, 23, 42)          # slate-900, tinta principal
-    ACCENT = (250, 204, 21)     # amarillo de acento solo para el título
+    INK = (15, 23, 42)          # tinta principal
+    ACCENT = (15, 23, 42)     #  solo para el título
 
     # img = Image.new('RGB', (width, height), color=(255, 255, 255))
     img = Image.new('RGB', (width, height), color=(186, 171, 156))
     draw = ImageDraw.Draw(img)
 
-    # Carga de fuentes
-    try:
-        title_font = ImageFont.truetype("DejaVuSans-Bold.ttf", font_size_title)
-        bullet_font = ImageFont.truetype("DejaVuSans.ttf", font_size_bullets)
-    except IOError:
-        try:
-            title_font = ImageFont.truetype("arial.ttf", font_size_title)
-            bullet_font = ImageFont.truetype("arial.ttf", font_size_bullets)
-        except IOError:
-            title_font = ImageFont.load_default()
-            bullet_font = ImageFont.load_default()
+    # Carga de fuentes (desde el estilo o fallback)
+    title_font = load_font(fonts["title"], font_size_title)
+    bullet_font = load_font(fonts["body"], font_size_bullets)
 
     title = overlay_content.get("title") if overlay_content else f"ESCENA {scene_num}"
     bullets = overlay_content.get("bullets", []) if overlay_content else []
@@ -677,6 +701,14 @@ def process_scene_media(
     print("\n" + "=" * 80)
     print(f" 🖼️ GENERANDO RECURSOS VISUALES MEDIANTE {provider_key.upper()} ({selected_model})")
     print(f" 📐 Aspect Ratio: {aspect_ratio}")
+
+    # Fuentes: preferir el snapshot del manifest, caer a styles.py si no existe
+    fonts = manifest.get("visual_style_fonts")
+    if not fonts or not isinstance(fonts, dict):
+        print("   ⚠️ manifest.json no tiene 'visual_style_fonts'. Consultando styles.py...")
+        fonts = get_style_fonts(manifest.get("visual_style", "cartoon_2d_cellshaded"))
+    print(f"   🔤 Fuentes del estilo: title='{fonts['title']}', body='{fonts['body']}'")
+
     if only_thumbnail:
         print(" 🎯 MODO SOLO MINIATURA (--only-thumbnail) ACTIVADO")
     elif target_scenes:
@@ -723,7 +755,7 @@ def process_scene_media(
         # Checkpoint: Si la imagen existe y es válida, verificamos si requiere estampado de overlay antes de omitir
         if not force and is_valid_image_file(image_path):
             if layout_type == "split_right" and overlay_content:
-                apply_split_right_overlay(image_path, overlay_content)
+                apply_split_right_overlay(image_path, overlay_content, fonts=fonts)
             print(f"\n⏭️ Escena {idx}: Imagen lista ('{image_filename}'). Omitiendo por Checkpoint.")
             scene["image_path"] = image_path
             skipped_count += 1
@@ -735,7 +767,7 @@ def process_scene_media(
 
         if layout_type == "code_graphic":
             print("   📊 Escena tipo 'code_graphic'. Generando tarjeta de texto...")
-            render_code_graphic_card(image_path, idx, overlay_content, aspect_ratio=aspect_ratio)
+            render_code_graphic_card(image_path, idx, overlay_content, aspect_ratio=aspect_ratio, fonts=fonts)
             success = True
         else:
             print(f"   Prompt: \"{visual_prompt[:90]}...\"")
@@ -764,7 +796,7 @@ def process_scene_media(
 
         # Estampar la tarjeta overlay si la escena es split_right
         if layout_type == "split_right" and overlay_content:
-            apply_split_right_overlay(image_path, overlay_content)
+            apply_split_right_overlay(image_path, overlay_content, fonts=fonts)
 
         scene["image_path"] = image_path
         processed_count += 1

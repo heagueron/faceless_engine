@@ -13,9 +13,10 @@ from core.styles import (
     get_style_prompt,
     get_style_key,
     get_style_background_rules,
-    get_style_description,      # ← FALTABA
+    get_style_description,      
+    get_style_fonts,            # ← NUEVO
     build_style_directive,
-    list_available_styles,      # ← FALTABA
+    list_available_styles,      
     STYLE_PROMPTS,
     DEFAULT_STYLE_KEY
 )
@@ -52,7 +53,6 @@ class OverlayContent(BaseModel):
         description="Lista de 1 a 3 puntos clave o datos breves a superponer."
     )
 
-
 class Scene(BaseModel):
     scene_number: int = Field(description="Número secuencial de la escena (1, 2, 3...)")
     narration_text: str = Field(description="Texto en español que dirá la voz en off para esta escena")
@@ -80,7 +80,6 @@ class Scene(BaseModel):
     audio_duration_seconds: Optional[float] = Field(default=None, description="Duración exacta en segundos del audio")
     image_path: Optional[str] = Field(default=None, description="Ruta a la imagen o video generado para la escena")
 
-
 class ScriptManifest(BaseModel):
     language: str = Field(default="es", description="Código de idioma del proyecto ('es', 'en', 'pt', etc.)")
     
@@ -88,6 +87,12 @@ class ScriptManifest(BaseModel):
         default="cartoon_2d_cellshaded",
         description="Clave del estilo visual aplicado (debe existir en core/styles.py)"
     )
+
+    visual_style_fonts: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Fuentes del estilo en el momento de generación (snapshot inmutable)."
+    )
+
     visual_style_prompt: str = Field(
         default="",
         description="Fragmento de prompt en INGLÉS del estilo (snapshot para inmutabilidad del proyecto)"
@@ -115,7 +120,6 @@ class ScriptManifest(BaseModel):
     scenes: List[Scene] = Field(description="Lista ordenada de las escenas que componen el guion")
     total_audio_duration_seconds: Optional[float] = Field(default=None, description="Duración acumulada de los audios")
 
-
 # --- MANEJO DE ESTRUCTURA DE PROYECTOS Y ARCHIVOS ---
 
 def slugify(text: str, max_words: int = 4) -> str:
@@ -123,7 +127,6 @@ def slugify(text: str, max_words: int = 4) -> str:
     clean_text = re.sub(r"[^\w\s]", "", text.lower(), flags=re.UNICODE)
     words = clean_text.split()[:max_words]
     return "_".join(words) if words else "proyecto_faceless"
-
 
 def create_project_structure(title: str, base_projects_dir: str = "projects") -> str:
     """Crea la carpeta timestamped del proyecto e interactúa con audio/ e images/."""
@@ -141,7 +144,6 @@ def create_project_structure(title: str, base_projects_dir: str = "projects") ->
 
     return project_dir
 
-
 def load_selected_idea() -> Optional[Dict[str, Any]]:
     """Carga la idea seleccionada desde output/selected_idea.json."""
     idea_path = os.path.join("output", "selected_idea.json")
@@ -155,7 +157,6 @@ def load_selected_idea() -> Optional[Dict[str, Any]]:
             print(f"⚠️ No se pudo leer '{idea_path}': {e}")
     return None
 
-
 def load_reverse_analysis() -> Optional[Dict[str, Any]]:
     """Carga el análisis de ingeniería inversa si existe en output/."""
     analysis_path = os.path.join("output", "reverse_prompting_analysis.json")
@@ -167,7 +168,6 @@ def load_reverse_analysis() -> Optional[Dict[str, Any]]:
         except Exception as e:
             print(f"⚠️ No se pudo leer el análisis de ingeniería inversa: {e}")
     return None
-
 
 def _build_layout_rules(style_key: str) -> str:
     """
@@ -213,7 +213,6 @@ def _build_layout_rules(style_key: str) -> str:
         if desc:
             lines.append(f"{i}. {desc}")
     return "\n".join(lines)
-
 
 def _has_overlay_layouts(style_key: str) -> bool:
     """Indica si el estilo permite algún layout que use overlay_content."""
@@ -345,7 +344,6 @@ def call_openrouter_api(system_instruction: str, user_prompt: str, model: str, m
         clean_json_str = re.sub(r"\n?```$", "", clean_json_str).strip()
 
     return clean_json_str
-
 
 # --- GENERACIÓN POR LOTES (STATEFUL BATCHING) ---
 
@@ -551,8 +549,9 @@ Instrucciones: Devuelve el objeto JSON 'scenes' correspondiente EXCLUSIVAMENTE a
 
     manifest_dict = {
         "language": language,
-        "visual_style": style_key,                          # ← NUEVO
-        "visual_style_prompt": get_style_prompt(style_key), # ← NUEVO (snapshot inmutable)
+        "visual_style": style_key,                         
+        "visual_style_prompt": get_style_prompt(style_key), 
+        "visual_style_fonts": get_style_fonts(style_key),    # ← NUEVO
         "allowed_layouts": STYLE_PROMPTS[style_key].get(
             "allowed_layouts", ["full_art", "split_right", "code_graphic"]
         ),
@@ -571,7 +570,6 @@ Instrucciones: Devuelve el objeto JSON 'scenes' correspondiente EXCLUSIVAMENTE a
     except Exception as e:
         print(f"❌ Error de validación en Pydantic al ensamblar el guion final: {e}")
         return None
-
 
 # --- REVISIÓN Y EDICIÓN INTERACTIVA ---
 
@@ -775,8 +773,6 @@ def generate_script(
     print(f"📄 Guion y manifiesto guardados en: '{manifest_path}'\n")
 
     return manifest_data
-
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generador de Guiones Faceless Engine")
