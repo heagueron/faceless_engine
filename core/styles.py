@@ -164,30 +164,38 @@ STYLE_PROMPTS: Dict[str, Dict[str, Any]] = {
         "text_safe": True,
         "allowed_layouts": ["full_art"],
     },
+    
     "flat_editorial_2d_lite": {
-        "description": (
-            "Ilustración editorial 2D plana con personajes de cabeza circular blanca, "
-            "contorno negro fino y fondos de color plano. Variante optimizada para FLUX."
+    "description": (
+        "Ilustración editorial cartoon 2D plana, personajes de cabeza circular "
+        "blanca con rasgos faciales mínimos, fondos de color plano saturado. "
+        "Variante optimizada para FLUX Schnell."
     ),
-        "prompt": (
-            "Flat 2D editorial cartoon, simple humanoid figures with round white "
-            "heads, thin black outlines, dotted eyes, two curved eyebrows"
-            "and a small mouth, flat solid colored clothing, "
-            "flat solid color background shapes with subtle tonal variation "
-            "for depth, no outlines on the background, "
-            "clean hand-drawn editorial look."
-        ),
-        "background_rules": (
-            "flat solid color shapes, subtle tonal variation for depth, "
-            "thin black outlines on characters only, clean hand-drawn editorial style"
-        ),
-        "text_safe": False,
-        "fonts": {
-            "title": HAND_DRAWN_FONT,
-            "body": HAND_DRAWN_FONT,
-        },
-        "allowed_layouts": ["full_art", "split_right", "code_graphic"],
+    "prompt": (
+        "Flat 2D cartoon editorial illustration, "
+        "simple humanoid figures with round white heads, "
+        "thin black outlines, dotted black eyes, two curved eyebrows, "
+        "and a small curved mouth, "
+        "simple flat solid colored clothing, "
+        "flat solid color background shapes with no textures, no gradients, "
+        "clean simple composition, "
+        "abstract colorful banners and signs instead of readable text, "
+        "no detailed signage, no readable text anywhere. "
+        "Only draw human figures if explicitly mentioned in the scene."
+    ),
+    "background_rules": (
+        "flat solid color shapes, no textures, no gradients, "
+        "thin black outlines on characters only, "
+        "clean cartoon editorial style"
+    ),
+    "text_safe": False,
+    "fonts": {
+        "title": HAND_DRAWN_FONT,
+        "body": HAND_DRAWN_FONT,
     },
+    "allowed_layouts": ["full_art", "split_right", "code_graphic"],
+    },
+
     "documentary_stickman_flow": {
         "description": (
             "Personaje stickman cartoon plano sobre fondo de pintura digital "

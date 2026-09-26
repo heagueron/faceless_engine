@@ -229,10 +229,8 @@ def apply_prompt_safeguards(
     """Garantiza estilo, reglas de encuadre y aspect ratio sin duplicaciones."""
     style_prompt = get_style_prompt(style_key)
     bg_rules = get_style_background_rules(style_key)
-    # Detectar la "firma" del estilo (primeras palabras clave) para evitar duplicar
     style_marker = style_prompt.split(",")[0].strip()[:40]
 
-    # Leer layouts permitidos por el estilo (fallback: los 3 clásicos)
     style_meta = STYLE_PROMPTS[get_style_key(style_key)]
     allowed_layouts = style_meta.get("allowed_layouts", ["full_art", "split_right", "code_graphic"])
     default_layout = allowed_layouts[0]
@@ -242,34 +240,82 @@ def apply_prompt_safeguards(
         else "9:16 vertical ratio"
     )
 
+    # ---- Helpers de detección robusta ----
+    def _normalize(p: str) -> str:
+        """Normaliza para comparaciones: lowercase, espacios colapsados, sin puntuación doble."""
+        p = p.lower()
+        p = re.sub(r"\s+", " ", p)
+        p = re.sub(r"\.+", ".", p)
+        return p.strip()
+
+    def _has_any(p_norm: str, markers: List[str]) -> bool:
+        return any(m in p_norm for m in markers)
+
+    def _clean_prompt(p: str) -> str:
+        """Limpia residuos obvios del prompt antes de las salvaguardas."""
+        p = p.strip()
+        p = re.sub(r"\s+", " ", p)
+        p = re.sub(r"\.\.+", ".", p)
+        p = re.sub(r"\s+\.", ".", p)
+        p = re.sub(r"\.\s*,", ".", p)
+        p = re.sub(r",\s*,", ",", p)
+        return p.strip(" ,.")
+
+    split_right_markers = [
+        "left 70%", "70% of the image",
+        "right 30%", "30% of the frame", "right third", "right side",
+        "negative space on the right", "empty on the right",
+        "empty space on the right", "empty right",
+    ]
+
+    no_text_markers = [
+        "no text", "without any text", "clean without any text",
+        "completely clean", "free of text", "no letters", "no words",
+    ]
+
+    bg_rules_markers = [
+        m.strip().lower() for m in bg_rules.split(",") if m.strip()
+    ] if bg_rules else []
+
     def _apply_to_prompt(prompt: str, layout: str) -> str:
-        prompt = (prompt or "").strip()
+        prompt = _clean_prompt(prompt or "")
 
-        if style_marker.lower() not in prompt.lower():
-            prompt = f"{style_prompt} {prompt}"
+        # 1. Estilo (prefijo)
+        if style_marker.lower() not in _normalize(prompt):
+            prompt = f"{style_prompt} {prompt}".strip()
 
-        if layout == "split_right" and "left 70%" not in prompt.lower():
+        # 2. Regla split_right
+        p_norm = _normalize(prompt)
+        if layout == "split_right" and not _has_any(p_norm, split_right_markers):
             prompt += (
-                ". Subject and main action framed strictly on the left 70% of the image, "
-                "the right 30% of the frame is an empty neutral wall or clean blurred "
-                "background with empty negative space."
+                ". Subject and main action framed strictly on the left 70% of "
+                "the image, the right 30% of the frame is clean empty negative "
+                "space."
             )
 
-        if bg_rules and bg_rules.lower() not in prompt.lower():
-            prompt += f", {bg_rules}"
+        # 3. Background rules (por partes, no bloque completo)
+        p_norm = _normalize(prompt)
+        missing_bg = [m for m in bg_rules_markers if m not in p_norm]
+        if missing_bg:
+            prompt += f", {', '.join(missing_bg)}"
 
-        if "completely clean" not in prompt.lower() and "no text" not in prompt.lower():
+        # 4. No-text
+        p_norm = _normalize(prompt)
+        if not _has_any(p_norm, no_text_markers):
             prompt += ", completely clean without any text, letters, or words"
 
-        if ratio_directive.lower() not in prompt.lower():
-            prompt += f", {ratio_directive}."
+        # 5. Aspect ratio
+        p_norm = _normalize(prompt)
+        if ratio_directive.lower() not in p_norm:
+            prompt += f", {ratio_directive}"
 
+        # Cierre final: punto único
+        prompt = prompt.rstrip(" .,") + "."
         return prompt
 
     for scene in scenes:
         layout = scene.get("layout_type", "full_art")
-        
-        # Defensa: forzar layout permitido si el manifest trae uno prohibido
+
         if layout not in allowed_layouts:
             print(
                 f"   ⚠️ Escena {scene.get('scene_number')}: layout '{layout}' "
@@ -277,13 +323,13 @@ def apply_prompt_safeguards(
             )
             scene["layout_type"] = default_layout
             layout = default_layout
-            # Si el estilo no permite code_graphic, limpiar overlay_content
             if default_layout == "full_art":
                 scene["overlay_content"] = None
 
         if layout == "code_graphic":
             scene["visual_prompt"] = None
             continue
+
         scene["visual_prompt"] = _apply_to_prompt(scene.get("visual_prompt", ""), layout)
 
     th_prompt = _apply_to_prompt(thumbnail_prompt, "full_art")
