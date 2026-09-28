@@ -534,6 +534,14 @@ Si layout_type NO es 'code_graphic', 'visual_prompt' DEBE estar escrito en INGL�
 
 "{get_style_prompt(style_key)} [DESCRIPCIÓN DE LA ACCIÓN Y ENTORNO], {get_style_background_rules(style_key)}, completely clean without any text, letters, or words, 16:9 horizontal widescreen ratio."
 
+REGLAS CRÍTICAS DE COMPLEJIDAD VISUAL (OBLIGATORIAS):
+1. UN SOLO FOCO POR ESCENA: Cada 'visual_prompt' describe UNA sola escena concreta con MÁXIMO 2-3 elementos principales. NO combines múltiples metáforas en una misma imagen.
+2. PROHIBIDO ENCADENAR ACCIONES: No uses construcciones tipo "X fluyendo hacia Y mientras Z observa" o "X alineando Y con Z". Elige UNA sola acción principal y descarta las demás.
+3. PROHIBIDO METÁFORAS COMPUESTAS: No uses metáforas abstractas híbridas como "engranajes que son calendarios", "cerebros que contienen plantas", "tuberías que llevan dividendos". Elige UNA metáfora simple o usa una escena literal.
+4. SIMPLIFICACIÓN NARRATIVA: Si la narración es compleja, elige el elemento MÁS representativo y descarta los demás. Es mejor una imagen simple y clara que una sobrecargada y confusa.
+5. ACCIONES SIMPLES DE PERSONAJE: Los personajes deben tener UNA acción simple y clara. Bien: "señalando un calendario", "mirando una pantalla con sorpresa". Mal: "alineando discos con engranajes mientras guía un río".
+6. EVITAR SUPERFICIES CON TEXTO POTENCIAL: No describas fachadas de tiendas, carteles, menús, periódicos, libros abiertos, pantallas con texto o etiquetas. Si la narración requiere esos elementos, descríbelos como "una forma geométrica abstracta" o "un rectángulo de color plano" en lugar de un objeto con texto legible.
+
 Esquema JSON requerido para este lote:
 {{
   "scenes": [

@@ -237,6 +237,33 @@ STYLE_PROMPTS: Dict[str, Dict[str, Any]] = {
         },
         "allowed_layouts": ["full_art"],
     },
+    "stick_comic_pro": {
+        "description": (
+            "Stick figure cartoon profesional con contorno grueso, "
+            "expresividad facial alta y fondos abstractos blancos."
+        ),
+        "prompt": (
+            "Simple stick figure cartoon character with a round white head, "
+            "thick bold black outlines, expressive facial features with arched "
+            "eyebrows and clear eyes, minimal hair as a couple of black strokes "
+            "on top, rectangular white torso, thick black line arms and legs "
+            "with rounded ends, simple mitten hands. "
+            "Bold uniform black outlines around the entire character, "
+            "flat solid colors, no shading, no gradients. "
+            "Clean white background with simple abstract graphic elements, "
+            "flat saturated colors, clean compositions with generous negative space."
+        ),
+        "background_rules": (
+            "clean white or pale background, thick black outlines on characters "
+            "and objects, flat saturated colors, no textures, no gradients"
+        ),
+        "text_safe": True,
+        "fonts": {
+            "title": HAND_DRAWN_FONT,
+            "body": HAND_DRAWN_FONT,
+        },
+        "allowed_layouts": ["full_art"],
+    },
     
 }
 
