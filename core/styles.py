@@ -40,7 +40,7 @@ STYLE_PROMPTS: Dict[str, Dict[str, Any]] = {
             "title": HAND_DRAWN_FONT,
             "body": HAND_DRAWN_FONT,
         },
-        "allowed_layouts": ["full_art", "split_right", "code_graphic"],
+        "allowed_layouts": ["full_art", "split_right", "code_graphic", "code_graphic_visual"],
     },
     "flat_vector": {
         "description": "Ilustración vectorial plana moderna, colores vibrantes, estilo corporativo.",
@@ -50,7 +50,7 @@ STYLE_PROMPTS: Dict[str, Dict[str, Any]] = {
         ),
         "background_rules": "solid flat color background, no gradients, uncluttered",
         "text_safe": True,
-        "allowed_layouts": ["full_art", "split_right", "code_graphic"],
+        "allowed_layouts": ["full_art", "split_right", "code_graphic", "code_graphic_visual"],
     },
     "cartoon_2d_cellshaded": {
         "description": "Cartoon 2D con cell-shading (estilo actual del proyecto).",
@@ -65,18 +65,9 @@ STYLE_PROMPTS: Dict[str, Dict[str, Any]] = {
             "title": HAND_DRAWN_FONT,
             "body": HAND_DRAWN_FONT,
         },
-        "allowed_layouts": ["full_art", "split_right", "code_graphic"],
+        "allowed_layouts": ["full_art", "split_right", "code_graphic", "code_graphic_visual"],
     },
-    "cyberpunk": {
-        "description": "Estética cyberpunk con neones azul/magenta y fondos oscuros.",
-        "prompt": (
-            "neon cyberpunk aesthetic, dark atmospheric background, glowing blue and magenta lights, "
-            "detailed digital art, futuristic urban environment"
-        ),
-        "background_rules": "dark moody background with neon accents, no daylight",
-        "text_safe": True,
-        "allowed_layouts": ["full_art", "split_right", "code_graphic"],
-    },
+
     "photorealistic": {
         "description": "Fotorrealismo cinematográfico, iluminación natural, alta nitidez.",
         "prompt": (
@@ -85,7 +76,7 @@ STYLE_PROMPTS: Dict[str, Dict[str, Any]] = {
         ),
         "background_rules": "clean background, natural environment, no artificial elements",
         "text_safe": True,
-        "allowed_layouts": ["full_art", "split_right", "code_graphic"],
+        "allowed_layouts": ["full_art", "split_right", "code_graphic", "code_graphic_visual"],
     },
     "watercolor": {
         "description": "Acuarela artística con texturas suaves y colores pastel.",
@@ -95,7 +86,7 @@ STYLE_PROMPTS: Dict[str, Dict[str, Any]] = {
         ),
         "background_rules": "textured watercolor paper background, soft edges",
         "text_safe": False,
-        "allowed_layouts": ["full_art", "split_right", "code_graphic"],
+        "allowed_layouts": ["full_art", "split_right", "code_graphic", "code_graphic_visual"],
     },
     "doodle_cartoon_landscape": {
         "description": (
@@ -123,7 +114,7 @@ STYLE_PROMPTS: Dict[str, Dict[str, Any]] = {
             "title": HAND_DRAWN_FONT,
             "body": HAND_DRAWN_FONT,
         },
-        "allowed_layouts": ["full_art", "split_right", "code_graphic"],
+        "allowed_layouts": ["full_art", "split_right", "code_graphic", "code_graphic_visual"],
     },
     "doodle_cartoon_lite": {
         "description": (
@@ -193,7 +184,7 @@ STYLE_PROMPTS: Dict[str, Dict[str, Any]] = {
         "title": HAND_DRAWN_FONT,
         "body": HAND_DRAWN_FONT,
     },
-    "allowed_layouts": ["full_art", "split_right", "code_graphic"],
+    "allowed_layouts": ["full_art", "split_right", "code_graphic", "code_graphic_visual"],
     },
 
     "documentary_stickman_flow": {

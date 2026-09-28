@@ -7,7 +7,7 @@ from typing import List, Optional, Dict, Any, Literal
 from dotenv import load_dotenv
 import requests
 
-from core.config import TARGET_LANGUAGE
+from core.config import TARGET_LANGUAGE, LAYOUT_PROPORTION_GUIDE, MIN_FULL_ART_RATIO
 
 from core.styles import (
     get_style_prompt,
@@ -56,12 +56,13 @@ class OverlayContent(BaseModel):
 class Scene(BaseModel):
     scene_number: int = Field(description="Número secuencial de la escena (1, 2, 3...)")
     narration_text: str = Field(description="Texto en español que dirá la voz en off para esta escena")
-    layout_type: Literal["full_art", "split_right", "code_graphic"] = Field(
+    layout_type: Literal["full_art", "split_right", "code_graphic", "code_graphic_visual"] = Field(
         default="full_art",
         description=(
             "full_art: Imagen completa 100% IA sin texto.\n"
             "split_right: Imagen IA encuadrada a la izquierda con 30% espacio negativo a la derecha para tarjeta de texto superpuesta por Python.\n"
-            "code_graphic: Sin imagen de IA. Gráfico o tabla de datos generado 100% por Python."
+            "code_graphic: Sin imagen de IA. Gráfico o tabla de datos generado 100% por Python.\n"
+            "code_graphic_visual: Sin imagen de IA. Pizarra blanca con bullets grandes y figura explainer a un lado apuntando hacia ella."
         )
     )
     visual_prompt: Optional[str] = Field(
@@ -99,7 +100,7 @@ class ScriptManifest(BaseModel):
     )
 
     allowed_layouts: List[str] = Field(
-        default_factory=lambda: ["full_art", "split_right", "code_graphic"],
+        default_factory=lambda: ["full_art", "split_right", "code_graphic", "code_graphic_visual"],
         description="Layouts permitidos por el estilo en el momento de generación (snapshot)."
     )
 
@@ -193,6 +194,13 @@ def _build_layout_rules(style_key: str) -> str:
             "gráficos de barras o cifras gigantes. La imagen NO se pide a la IA "
             "(visual_prompt = null), sino que se dibuja 100% por código en Python."
         ),
+        "code_graphic_visual": (
+            "layout_type = 'code_graphic_visual': Para reforzar visualmente un concepto "
+            "con una pizarra blanca grande y un personaje explainer apuntando hacia ella. "
+            "Se usa cuando los bullets son el foco de la escena y un explainer aporta "
+            "claridad narrativa. La imagen NO se pide a la IA (visual_prompt = null)."
+        ),
+
     }
 
     # Caso extremo: un solo layout permitido
@@ -391,6 +399,37 @@ def call_openrouter_api(system_instruction: str, user_prompt: str, model: str, m
 
     return clean_json_str
 
+def _parse_json_safely(raw_json_str: str, context: str = "") -> Optional[Dict[str, Any]]:
+    """
+    Parsea JSON del LLM tolerando errores comunes.
+    Intenta:
+      1. json.loads() directo
+      2. json_repair.loads() como fallback
+    Retorna None si todo falla.
+    """
+    if not raw_json_str:
+        return None
+
+    # Intento 1: parseo estricto
+    try:
+        return json.loads(raw_json_str)
+    except json.JSONDecodeError:
+        pass
+
+    # Intento 2: reparación con json_repair
+    try:
+        from json_repair import repair_json
+        repaired = repair_json(raw_json_str, return_objects=True)
+        if isinstance(repaired, dict):
+            print(f"   🔧 JSON reparado automáticamente ({context}).")
+            return repaired
+    except ImportError:
+        print(f"   ⚠️ json_repair no está instalado. Instala con: pip install json-repair")
+    except Exception as e:
+        print(f"   ⚠️ Fallo al reparar JSON ({context}): {e}")
+
+    return None
+
 # --- GENERACIÓN POR LOTES (STATEFUL BATCHING) ---
 
 def generate_script_from_openrouter(
@@ -459,7 +498,11 @@ Cantidad total de escenas requeridas: {target_scenes} escenas.
 
     try:
         raw_outline_json = call_openrouter_api(outline_system_prompt, outline_user_prompt, model, max_tokens=4096)
-        outline_data = json.loads(raw_outline_json)
+        outline_data = _parse_json_safely(raw_outline_json, "FASE 1 - escaleta")
+        if outline_data is None:
+            print(f"❌ Error al parsear la Escaleta Maestra. Respuesta cruda (primeros 500 chars):")
+            print(raw_outline_json[:500])
+            return None
     except Exception as e:
         print(f"❌ Error al generar la Escaleta Maestra: {e}")
         return None
@@ -478,13 +521,89 @@ Cantidad total de escenas requeridas: {target_scenes} escenas.
 
     layout_rules_block = _build_layout_rules(style_key)
 
+        # Bloque de proporción de layouts (construido dinámicamente desde config)
+    allowed = STYLE_PROMPTS[style_key].get("allowed_layouts", [])
+    if len(allowed) > 1:
+        lines = ["REGLA CRÍTICA DE PROPORCIÓN DE LAYOUTS:"]
+        lines.append(
+            "La distribución de layouts en el video DEBE respetar aproximadamente "
+            "estas proporciones:"
+        )
+        for layout_key in ["full_art", "split_right", "code_graphic", "code_graphic_visual"]:
+            if layout_key not in allowed:
+                continue
+            if layout_key not in LAYOUT_PROPORTION_GUIDE:
+                continue
+            min_r, max_r = LAYOUT_PROPORTION_GUIDE[layout_key]
+            min_pct = int(min_r * 100)
+            max_pct = int(max_r * 100)
+            dominant = " ES EL LAYOUT DOMINANTE." if layout_key == "full_art" else ""
+            max_note = " (máximo 1 por video)" if layout_key == "code_graphic_visual" else ""
+            lines.append(
+                f"- '{layout_key}': {min_pct}-{max_pct}% de las escenas"
+                f"{dominant}{max_note}."
+            )
+        lines.append("")
+        lines.append(
+            "Esto significa que en la mayoría de los videos, la mayor parte "
+            "de las escenas deben ser 'full_art'. Cuando dudes entre 'full_art' "
+            "y otro layout, USA 'full_art'."
+        )
+        lines.append("")
+        lines.append(
+            "Las escenas 'full_art' son las que sostienen la narrativa. Los otros "
+            "layouts son ACENTOS, no la norma."
+        )
+        layout_proportion_block = "\n".join(lines)
+    else:
+        layout_proportion_block = ""
+
+        # Bloque de decisión entre code_graphic y code_graphic_visual (solo si el estilo permite ambos)
+    style_allowed = STYLE_PROMPTS[style_key].get("allowed_layouts", [])
+    if "code_graphic" in style_allowed and "code_graphic_visual" in style_allowed:
+        code_graphic_decision_block = (
+            "REGLAS DE DECISIÓN: 'code_graphic' vs 'code_graphic_visual':\n"
+            "Ambos layouts son válidos, pero se usan en contextos distintos:\n"
+            "\n"
+            "- Usa 'code_graphic' para la mayoría de las escenas con datos, listas "
+            "o cifras. Es la opción por defecto cuando dudes.\n"
+            "\n"
+            "- Usa 'code_graphic_visual' SOLO cuando se cumplan las DOS condiciones:\n"
+            "  1. Los bullets de la escena sean el FOCO de la narración (no un apoyo).\n"
+            "  2. El concepto sea lo bastante importante como para merecer una pausa "
+            "visual reforzada con un explainer.\n"
+            "  Regla práctica: usa 'code_graphic_visual' un máximo de 1-2 veces "
+            "por video. Si dudas, usa 'code_graphic'.\n"
+            "\n"
+            "- PROHIBIDO usar 'code_graphic_visual' en la primera escena del video "
+            "(el hook va con 'full_art').\n"
+            "- PROHIBIDO usar 'code_graphic_visual' en la escena final (el CTA va "
+            "con 'full_art').\n"
+        )
+    else:
+        code_graphic_decision_block = ""
+
+    bullet_quality_block = (
+        "REGLAS DE CALIDAD DE BULLETS:\n"
+        "- Cada bullet debe ser un concepto autónomo y concreto, no una frase "
+        "genérica.\n"
+        "- Máximo 60 caracteres por bullet en 'code_graphic_visual'.\n"
+        "- Evita bullets con subordinadas o comas múltiples.\n"
+        "- Los bullets NO son oraciones completas; son etiquetas o frases nominales."
+    )
+
     if _has_overlay_layouts(style_key):
         overlay_rules_block = (
             "REGLAS DE CONTENIDO SUPERPUESTO (overlay_content):\n"
-            "- Si layout_type es 'split_right' o 'code_graphic', DEBES completar "
-            "'overlay_content' con 'title' (MAYÚSCULAS) y/o 'bullets' "
+            "- Si layout_type es 'split_right': completa 'overlay_content' con "
+            "'title' (MAYÚSCULAS cortas, 2-4 palabras) y 'bullets' "
             "(lista de 1 a 3 ítems breves).\n"
-            "- Si layout_type es 'full_art', 'overlay_content' debe ser null."
+            "- Si layout_type es 'code_graphic': completa 'overlay_content' con "
+            "'title' (MAYÚSCULAS) y 'bullets' (lista de 1 a 3 ítems breves).\n"
+            "- Si layout_type es 'code_graphic_visual': completa 'overlay_content' "
+            "SOLO con 'bullets' (2 a 4 ítems). El campo 'title' debe ser null. "
+            "Cada bullet debe ser corto y autónomo (máximo 60 caracteres).\n"
+            "- Si layout_type es 'full_art': 'overlay_content' debe ser null."
         )
     else:
         overlay_rules_block = (
@@ -527,7 +646,14 @@ REGLAS STRICTAS DE IDIOMA:
 
 {layout_rules_block}
 
+{layout_proportion_block}
+
+{code_graphic_decision_block}
+
 {overlay_rules_block}
+
+{bullet_quality_block}
+
 
 REGLAS DE PROMPT VISUAL ('visual_prompt'):
 Si layout_type NO es 'code_graphic', 'visual_prompt' DEBE estar escrito en INGLÉS y seguir la siguiente plantilla base:
@@ -580,7 +706,11 @@ Instrucciones: Devuelve el objeto JSON 'scenes' correspondiente EXCLUSIVAMENTE a
 
         try:
             raw_batch_json = call_openrouter_api(batch_system_prompt, batch_user_prompt, model, max_tokens=8192)
-            batch_data = json.loads(raw_batch_json)
+            batch_data = _parse_json_safely(raw_batch_json, f"FASE 2 - lote {start_scene}-{end_scene}")
+            if batch_data is None:
+                print(f"❌ Error al parsear el lote {start_scene}-{end_scene}. Respuesta cruda (primeros 500 chars):")
+                print(raw_batch_json[:500])
+                break
             batch_scenes = batch_data.get("scenes", [])
             all_scenes.extend(batch_scenes)
         except Exception as e:
@@ -600,6 +730,12 @@ Instrucciones: Devuelve el objeto JSON 'scenes' correspondiente EXCLUSIVAMENTE a
         aspect_ratio,
         style_key,          # ← FALTABA
     )
+
+    # Aplicar regla de proporción de layouts
+    allowed_layouts = STYLE_PROMPTS[style_key].get(
+        "allowed_layouts", ["full_art", "split_right", "code_graphic", "code_graphic_visual"]
+    )
+    scenes = _enforce_layout_proportions(scenes, allowed_layouts, MIN_FULL_ART_RATIO,)
 
     manifest_dict = {
         "language": language,
@@ -827,6 +963,68 @@ def generate_script(
     print(f"📄 Guion y manifiesto guardados en: '{manifest_path}'\n")
 
     return manifest_data
+
+def _enforce_layout_proportions(
+    scenes: List[Dict[str, Any]],
+    allowed_layouts: List[str],
+    min_full_art_ratio: float = MIN_FULL_ART_RATIO
+) -> List[Dict[str, Any]]:
+    """
+    Audita la proporción de layouts. Si 'full_art' está por debajo del
+    mínimo, convierte los layouts sobrantes a 'full_art'.
+
+    Prioridad de conversión (primero los que menos peso narrativo tienen):
+      1. code_graphic_visual (nunca debería estar en exceso)
+      2. code_graphic
+      3. split_right
+    """
+    if "full_art" not in allowed_layouts:
+        return scenes
+
+    total = len(scenes)
+    if total == 0:
+        return scenes
+
+    min_full_art_count = int(total * min_full_art_ratio)
+    current_full_art = sum(1 for s in scenes if s.get("layout_type") == "full_art")
+
+    if current_full_art >= min_full_art_count:
+        return scenes
+
+    deficit = min_full_art_count - current_full_art
+    print(f"   🔧 Proporción de layouts: {current_full_art}/{total} full_art. "
+          f"Faltan {deficit} para alcanzar el mínimo de {min_full_art_count}.")
+
+    # Prioridad de conversión
+    conversion_priority = ["code_graphic_visual", "code_graphic", "split_right"]
+
+    for target_layout in conversion_priority:
+        if deficit <= 0:
+            break
+        for scene in scenes:
+            if deficit <= 0:
+                break
+            if scene.get("layout_type") == target_layout:
+                # No convertir la primera ni la última escena si son code_graphic
+                # (aunque en la práctica no deberían serlo)
+                idx = scene.get("scene_number", 0)
+                if idx == 1 or idx == total:
+                    continue
+
+                print(f"   🔧 Escena {idx}: '{target_layout}' → 'full_art' "
+                      f"(por proporción).")
+                scene["layout_type"] = "full_art"
+                # Limpiar overlay_content si pasa a full_art
+                scene["overlay_content"] = None
+                # Mantener el visual_prompt original si existe; si no, un default
+                if not scene.get("visual_prompt"):
+                    scene["visual_prompt"] = (
+                        "Simple abstract conceptual illustration representing "
+                        "the narration"
+                    )
+                deficit -= 1
+
+    return scenes
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generador de Guiones Faceless Engine")
