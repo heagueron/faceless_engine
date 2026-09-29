@@ -28,8 +28,10 @@ from core.renderers.whiteboard import render_whiteboard
 from core.overlays.split_right import apply_split_right_overlay
 from core.providers.fal import generate_image_via_fal
 from core.providers.openrouter import generate_image_via_openrouter
+from core.providers.nvidia import generate_image_via_nvidia
 from core.providers.fallback import create_fallback_image
-from core.styles import get_style_fonts, GLOBAL_FALLBACK_FONT
+from core.styles import get_style_fonts, GLOBAL_FALLBACK_FONT, STYLE_PROMPTS
+
 
 load_dotenv()
 
@@ -41,10 +43,56 @@ DEFAULT_IMAGE_PROVIDER = "fal"
 
 DEFAULT_MODELS = {
     "openrouter": "qwen/qwen-image-3",
-    "fal": "fal-ai/flux-1/schnell"
+    "fal": "fal-ai/flux-1/schnell",
+    "nvidia": "black-forest-labs/flux.2-klein-4b",
 }
-# ==============================================================================
 
+def resolve_effective_provider(
+    cli_provider: str,
+    manifest: Dict[str, Any],
+    cli_model: Optional[str] = None,
+) -> tuple[str, str, int]:
+    """
+    Determina el proveedor y modelo efectivos para un proyecto.
+
+    Reglas de decisión:
+      1. Si el usuario pasó --provider explícito (distinto del default),
+         ese gana, ignorando preferencias del estilo.
+      2. Si el estilo declara 'preferred_provider', se usa ese.
+      3. Si ninguno de los anteriores, se usa el proveedor por CLI.
+
+    Retorna:
+        (provider_efectivo, modelo_efectivo, seed_efectivo)
+    """
+    style_key = manifest.get("visual_style", "cartoon_2d_cellshaded")
+    style_meta = STYLE_PROMPTS.get(style_key, {})
+
+    preferred_provider = style_meta.get("preferred_provider")
+    preferred_model = style_meta.get("preferred_model")
+    preferred_seed = style_meta.get("preferred_seed", 100)
+
+    # ¿El usuario forzó un proveedor explícito?
+    explicit_provider = cli_provider != DEFAULT_IMAGE_PROVIDER
+
+    if explicit_provider:
+        # El CLI gana. Modelo: el del CLI si lo dio, si no el default del proveedor.
+        provider = cli_provider.lower().strip()
+        model = cli_model or DEFAULT_MODELS.get(provider, "")
+        seed = preferred_seed
+    elif preferred_provider:
+        # El estilo manda.
+        provider = preferred_provider.lower().strip()
+        model = cli_model or preferred_model or DEFAULT_MODELS.get(provider, "")
+        seed = preferred_seed
+    else:
+        # Fallback: usar el provider por CLI (o default).
+        provider = cli_provider.lower().strip()
+        model = cli_model or DEFAULT_MODELS.get(provider, "")
+        seed = preferred_seed
+
+    return provider, model, seed
+
+# ==============================================================================
 
 def parse_scene_input(scene_str: str) -> List[int]:
     """
@@ -69,7 +117,6 @@ def parse_scene_input(scene_str: str) -> List[int]:
             scenes.add(int(part))
     return sorted(list(scenes))
 
-
 def get_current_project_dir() -> str:
     """Carga la ruta del proyecto activo desde output/current_project.json."""
     current_json_path = os.path.join("output", "current_project.json")
@@ -88,7 +135,6 @@ def get_current_project_dir() -> str:
         "No se especificó --project_dir y no se encontró un proyecto válido en 'output/current_project.json'."
     )
 
-
 def enforce_style_in_prompt(prompt: Optional[str], manifest: Dict[str, Any]) -> Optional[str]:
     """Refuerza el estilo declarado en el manifest si el prompt no lo contiene.
     Retorna None si el prompt es None (escenas code_graphic* no lo usan)."""
@@ -105,7 +151,6 @@ def enforce_style_in_prompt(prompt: Optional[str], manifest: Dict[str, Any]) -> 
         prompt = f"{style_prompt} {prompt}"
     return prompt
 
-
 def print_style_banner(manifest: Dict[str, Any]) -> None:
     """Muestra el estilo visual declarado en el manifest."""
     style_key = manifest.get("visual_style")
@@ -113,7 +158,6 @@ def print_style_banner(manifest: Dict[str, Any]) -> None:
         print(f" 🎨 Estilo del proyecto: '{style_key}'")
     else:
         print(" ⚠️ manifest.json no tiene 'visual_style'. Se asume estilo legacy.")
-
 
 def is_valid_image_file(path: str) -> bool:
     """Verifica si un archivo existe y es una imagen válida > 100 bytes."""
@@ -127,7 +171,6 @@ def is_valid_image_file(path: str) -> bool:
         return True
     except Exception:
         return False
-
 
 def process_thumbnail(
     project_dir: str,
@@ -184,7 +227,6 @@ def process_thumbnail(
     manifest["thumbnail_raw_path"] = output_path
     return True
 
-
 def process_scene_media(
     project_dir: str,
     provider: str = DEFAULT_IMAGE_PROVIDER,
@@ -196,19 +238,24 @@ def process_scene_media(
     rate_limit_delay: float = 1.0
 ):
     """Procesa escenas y/o miniatura del manifest.json."""
-    provider_key = provider.lower().strip()
-    if provider_key not in ["openrouter", "fal"]:
+    # 1. Validar proveedor pedido por CLI
+    cli_provider = provider.lower().strip()
+    if cli_provider not in ["openrouter", "fal", "nvidia"]:
         print(f"⚠️ Proveedor '{provider}' no válido. Usando '{DEFAULT_IMAGE_PROVIDER}'.")
-        provider_key = DEFAULT_IMAGE_PROVIDER
+        cli_provider = DEFAULT_IMAGE_PROVIDER
 
-    selected_model = model or DEFAULT_MODELS[provider_key]
-
+    # 2. Cargar el manifest (necesario para decidir proveedor efectivo)
     manifest_path = os.path.join(project_dir, "manifest.json")
     if not os.path.exists(manifest_path):
         raise FileNotFoundError(f"No se encontró manifest.json en: {project_dir}")
-
+    
     with open(manifest_path, "r", encoding="utf-8") as f:
         manifest = json.load(f)
+
+    # 3. Resolver proveedor y modelo efectivos (considera preferencias del estilo)
+    provider_key, selected_model, effective_seed = resolve_effective_provider(
+        cli_provider, manifest, model
+    )
 
     images_dir = os.path.join(project_dir, "images")
     os.makedirs(images_dir, exist_ok=True)
@@ -245,6 +292,8 @@ def process_scene_media(
     if not all_scenes:
         print("⚠️ No hay escenas en manifest.json")
         return
+
+    
 
     if target_scenes:
         scenes_to_process = [s for s in all_scenes if s.get("scene_number") in target_scenes]
@@ -300,7 +349,6 @@ def process_scene_media(
         else:
             visual_prompt = visual_prompt or "minimalist 2D vector graphic"
             visual_prompt = enforce_style_in_prompt(visual_prompt, manifest) or visual_prompt
-            print(f"   Prompt: \"{visual_prompt[:90]}...\"")
             
             if provider_key == "openrouter":
                 success = generate_image_via_openrouter(
@@ -309,6 +357,15 @@ def process_scene_media(
                     model=selected_model,
                     aspect_ratio=aspect_ratio,
                     max_retries=max_retries
+                )
+            elif provider_key == "nvidia":
+                success = generate_image_via_nvidia(
+                    prompt=visual_prompt,
+                    output_path=image_path,
+                    model=selected_model,
+                    aspect_ratio=aspect_ratio,
+                    seed=effective_seed,
+                    max_retries=max_retries,
                 )
             else:
                 success = generate_image_via_fal(
@@ -349,7 +406,9 @@ def process_scene_media(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Módulo Visual para Faceless Engine")
     parser.add_argument("--project_dir", type=str, default=None, help="Directorio del proyecto")
-    parser.add_argument("--provider", type=str, default=DEFAULT_IMAGE_PROVIDER, choices=["openrouter", "fal"], help="Proveedor de imágenes")
+    
+    parser.add_argument("--provider", type=str, default=DEFAULT_IMAGE_PROVIDER, choices=["openrouter", "fal", "nvidia"], help="Proveedor de imágenes")
+    
     parser.add_argument("--model", type=str, default=None, help="Modelo específico")
     parser.add_argument("--retries", type=int, default=3, help="Reintentos por escena")
     parser.add_argument("--scene", type=str, default=None, help="Escenas a regenerar")

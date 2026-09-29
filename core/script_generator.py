@@ -243,10 +243,7 @@ def apply_prompt_safeguards(
     allowed_layouts = style_meta.get("allowed_layouts", ["full_art", "split_right", "code_graphic"])
     default_layout = allowed_layouts[0]
 
-    ratio_directive = (
-        "16:9 horizontal widescreen ratio" if aspect_ratio == "16:9"
-        else "9:16 vertical ratio"
-    )
+    ratio_directive = "16:9" if aspect_ratio == "16:9" else "9:16"
 
     # ---- Helpers de detección robusta ----
     def _normalize(p: str) -> str:
@@ -290,7 +287,7 @@ def apply_prompt_safeguards(
 
         # 1. Estilo (prefijo)
         if style_marker.lower() not in _normalize(prompt):
-            prompt = f"{style_prompt} {prompt}".strip()
+            prompt = f"{prompt} {style_prompt} ".strip()
 
         # 2. Regla split_right
         p_norm = _normalize(prompt)
@@ -310,7 +307,7 @@ def apply_prompt_safeguards(
         # 4. No-text
         p_norm = _normalize(prompt)
         if not _has_any(p_norm, no_text_markers):
-            prompt += ", completely clean without any text, letters, or words"
+            prompt += ", no text"
 
         # 5. Aspect ratio
         p_norm = _normalize(prompt)
@@ -521,7 +518,25 @@ Cantidad total de escenas requeridas: {target_scenes} escenas.
 
     layout_rules_block = _build_layout_rules(style_key)
 
-        # Bloque de proporción de layouts (construido dinámicamente desde config)
+    # --- Regla de longitud de prompt para estilos con preferred_provider de bajo coste ---
+    # Estilos como stick_classic_klein con Schnell/Klein necesitan prompts cortos
+    # para que el modelo no colapse al sujeto y respete la escena.
+    style_meta = STYLE_PROMPTS[get_style_key(style_key)]
+    if style_meta.get("preferred_provider") in ("fal", "nvidia"):
+        prompt_length_block = (
+            "REGLA CRÍTICA DE LONGITUD DE PROMPT:\n"
+            "El campo 'visual_prompt' debe ser CORTO: máximo 150 caracteres en total. "
+            "Describe la escena en UNA sola frase sencilla. Ejemplos válidos:\n"
+            "  - 'A stick figure being crushed under a giant house on its back, shocked expression.'\n"
+            "  - 'A stick figure pointing at a large golden coin on a table.'\n"
+            "  - 'A stick figure holding a small red flag, proud expression.'\n"
+            "NO repitas el estilo en el 'visual_prompt'. NO incluyas reglas de fondo. "
+            "NO describas múltiples acciones. UNA escena, UN sujeto principal, UNA acción."
+        )
+    else:
+        prompt_length_block = ""
+
+    # Bloque de proporción de layouts (construido dinámicamente desde config)
     allowed = STYLE_PROMPTS[style_key].get("allowed_layouts", [])
     if len(allowed) > 1:
         lines = ["REGLA CRÍTICA DE PROPORCIÓN DE LAYOUTS:"]
@@ -654,11 +669,17 @@ REGLAS STRICTAS DE IDIOMA:
 
 {bullet_quality_block}
 
+{prompt_length_block}
 
 REGLAS DE PROMPT VISUAL ('visual_prompt'):
-Si layout_type NO es 'code_graphic', 'visual_prompt' DEBE estar escrito en INGLÉS y seguir la siguiente plantilla base:
-
-"{get_style_prompt(style_key)} [DESCRIPCIÓN DE LA ACCIÓN Y ENTORNO], {get_style_background_rules(style_key)}, completely clean without any text, letters, or words, 16:9 horizontal widescreen ratio."
+Si layout_type NO es 'code_graphic', 'visual_prompt' DEBE estar escrito en INGLÉS.
+NO incluyas el estilo ni reglas de fondo en el 'visual_prompt'. El pipeline los añade automáticamente después.
+Solo describe la escena: sujeto principal + acción + un contexto mínimo.
+Ejemplos válidos:
+  - 'A stick figure being crushed under a giant house on its back, shocked expression.'
+  - 'A stick figure pointing at a large golden coin on a table.'
+  - 'A stick figure standing on a hill, looking at a bright sunrise.'
+La longitud máxima del 'visual_prompt' es 150 caracteres.
 
 REGLAS CRÍTICAS DE COMPLEJIDAD VISUAL (OBLIGATORIAS):
 1. UN SOLO FOCO POR ESCENA: Cada 'visual_prompt' describe UNA sola escena concreta con MÁXIMO 2-3 elementos principales. NO combines múltiples metáforas en una misma imagen.

@@ -255,7 +255,30 @@ STYLE_PROMPTS: Dict[str, Dict[str, Any]] = {
         },
         "allowed_layouts": ["full_art"],
     },
-    
+
+    "stick_classic_klein": {
+        "description": (
+            "Stick figure clásico minimalista: cuerpo de línea, sin iris, sin nariz, "
+            "manos tipo manopla. Optimizado para FLUX Schnell en fal.ai."
+        ),
+        "prompt": (
+            "Classic stick figure, round white head, dot eyes, "
+            "thin black lines, no shading, pure white background."
+        ),
+        "background_rules": (
+            "pure white background, thin black lines only"
+        ),
+        "text_safe": False,
+        "fonts": {
+            "title": HAND_DRAWN_FONT,
+            "body": HAND_DRAWN_FONT,
+        },
+        "allowed_layouts": ["full_art", "code_graphic", "code_graphic_visual"],
+        # Schnell es el motor principal: barato y respeta prompts cortos.
+        "preferred_provider": "fal",
+        "preferred_model": "fal-ai/flux-1/schnell",
+        "preferred_seed": 100,
+},   
 }
 
 DEFAULT_STYLE_KEY = "cartoon_2d_cellshaded"
