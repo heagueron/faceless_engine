@@ -1,4 +1,10 @@
+# `ARCHITECTURE.md` actualizado
 
+Aquí tienes el archivo completo, listo para guardar. Reemplaza el contenido íntegro del actual.
+
+Los cambios respecto al anterior están marcados conceptualmente al final del documento.
+
+```markdown
 # Guía de Desarrollo para Faceless Engine
 
 Este archivo es la guía central del proyecto **Faceless Engine**. Define la arquitectura, flujos de trabajo, estándares de código y procedimientos de desarrollo.
@@ -33,8 +39,11 @@ Este archivo es la guía central del proyecto **Faceless Engine**. Define la arq
                                              │
                                 ┌────────────▼─────────────┐
                                 │   script_generator.py    │
-                                │ (Escaleta + Batch JSON)  │
+                                │  (Fachada + CLI)         │
                                 └────────────┬─────────────┘
+                                             │
+                                             ├─ generation/ (schemas, api_client,
+                                             │   safeguards, orchestrator, ...)
                                              │
                        ┌─────────────────────┴─────────────────────┐
                        │                                           │
@@ -127,14 +136,24 @@ faceless_engine/
 │   ├── description_generator.py # Generación de SEO, descripción, tags y pinned comments
 │   ├── fonts.py                 # Carga de fuentes con fallback en cascada
 │   ├── ideas.py                 # Ideación de 5 ángulos virales interactivos
-│   ├── media_fetcher.py         # Orquestador de recursos visuales (delega a subpaquetes)
-│   ├── script_generator.py      # Generador de escaleta y guion estructurado por lotes
+│   ├── media_fetcher.py         # Orquestador visual (delega a subpaquetes)
+│   ├── script_generator.py      # Fachada pública + CLI (delega a generation/)
 │   ├── styles.py                # Catálogo de estilos visuales
 │   ├── thumbnail_builder.py     # Compositor tipográfico de miniaturas
 │   ├── trend_analyzer.py        # Búsqueda en YouTube e Ingeniería Inversa
 │   ├── uploader.py              # Módulo de publicación automática (YouTube API)
 │   ├── video_composer.py        # Ensamblado con efecto Ken Burns y sincronización
 │   ├── voice_generator.py       # Síntesis neural con edge-tts
+│   ├── generation/              # Pipeline de generación de guiones (refactor 2026-10)
+│   │   ├── __init__.py
+│   │   ├── schemas.py           # OverlayContent, Scene, ScriptManifest
+│   │   ├── project_io.py        # slugify, create_project_structure, loaders
+│   │   ├── api_client.py        # call_openrouter_api, _parse_json_safely
+│   │   ├── layout_rules.py      # _build_layout_rules, _has_overlay_layouts
+│   │   ├── safeguards.py        # apply_prompt_safeguards
+│   │   ├── proportions.py       # _enforce_layout_proportions
+│   │   ├── review.py            # display_and_review_script, _prompt_style_interactive
+│   │   └── orchestrator.py      # generate_script_from_openrouter, generate_script
 │   ├── overlays/                # Overlays aplicados sobre imágenes de IA
 │   │   ├── __init__.py
 │   │   └── split_right.py       # Tarjeta superpuesta en el 30% derecho
@@ -180,7 +199,7 @@ faceless_engine/
 3. **Manejo de Idiomas:** Centralizado en `core/config.py`. Los prompts visuales para IA se generan siempre en **INGLÉS**, mientras que las locuciones, textos superpuestos y metadatos se generan en el idioma objetivo (`es`, `en`, `pt`).
 4. **Resiliencia en Red:** Todas las llamadas a OpenRouter, Fal.ai, NVIDIA y YouTube API deben implementar `try/except`, timeouts y reintentos exponenciales con respaldo a generadores locales (Pillow).
 5. **Estado Centralizado:** Cada ejecución actualiza `output/current_project.json` permitiendo reanudar o ejecutar módulos individuales de forma desacoplada sin reescribir argumentos.
-6. **Separación de Responsabilidades:** Los módulos que orquestan (como `media_fetcher.py`) no contienen lógica de negocio. Delegan a subpaquetes especializados.
+6. **Separación de Responsabilidades:** Los módulos que orquestan (`media_fetcher.py`, `script_generator.py`) no contienen lógica de negocio. Delegan a subpaquetes especializados (`generation/`, `renderers/`, `providers/`, `overlays/`).
 
 ---
 
@@ -209,13 +228,13 @@ Cada estilo en `core/styles.py` puede declarar opcionalmente un campo `fonts` co
         "title": "PatrickHand-Regular.ttf",
         "body": "PatrickHand-Regular.ttf",
     },
-    "allowed_layouts": ["full_art", "split_right", "code_graphic"],
+    "allowed_layouts": ["full_art", "split_right", "code_graphic", "code_graphic_visual"],
 },
 ```
 
 **Aplicación:** Las fuentes solo afectan a los layouts que renderiza Python: `code_graphic` y `code_graphic_visual`. Los prompts visuales enviados a proveedores de IA no las usan.
 
-**Snapshot inmutable:** Cuando `script_generator.py` crea un proyecto, copia las fuentes al manifest bajo `visual_style_fonts`. Esto garantiza reproducibilidad histórica.
+**Snapshot inmutable:** Cuando el orquestador crea un proyecto, copia las fuentes al manifest bajo `visual_style_fonts`. Esto garantiza reproducibilidad histórica.
 
 **Fallback en cascada** (`core/fonts.py::load_font`):
 1. Fuente declarada por el estilo, en `assets/fonts/`.
@@ -257,7 +276,46 @@ El proveedor `nvidia.py` implementa un throttle interno con `_throttle()` que ga
 
 NVIDIA NIM impone un límite de **800 caracteres** por prompt. La función `_compress_prompt_for_nvidia()` normaliza y recorta prompts largos antes de enviarlos. En la práctica, con los prompts cortos que ahora usamos, el límite rara vez se alcanza.
 
-### 5.3 Reglas de diseño para prompts visuales
+### 5.3 Arquitectura del paquete `generation` (refactor 2026-10)
+
+`script_generator.py` fue refactorizado para delegar responsabilidades a un subpaquete especializado. El archivo principal ahora actúa como **fachada pública + CLI**.
+
+#### Módulos especializados
+
+| Módulo | Responsabilidad |
+|---|---|
+| `core/generation/schemas.py` | Definición Pydantic de `OverlayContent`, `Scene`, `ScriptManifest` |
+| `core/generation/project_io.py` | `slugify`, `create_project_structure`, loaders de archivos de estado |
+| `core/generation/api_client.py` | `call_openrouter_api` (llamada HTTP/OpenAI SDK) y `_parse_json_safely` (parser tolerante con `json_repair`) |
+| `core/generation/layout_rules.py` | `_build_layout_rules`, `_has_overlay_layouts` (reglas de layout para el LLM) |
+| `core/generation/safeguards.py` | `apply_prompt_safeguards` (garantiza estilo, bg_rules, anti-texto, ratio, sin duplicación) |
+| `core/generation/proportions.py` | `_enforce_layout_proportions` (convierte escenas a `full_art` si la proporción cae por debajo del mínimo) |
+| `core/generation/review.py` | `display_and_review_script`, `_prompt_style_interactive` (interfaz interactiva) |
+| `core/generation/orchestrator.py` | `generate_script_from_openrouter` (2 fases + batches), `generate_script` (flujo completo) |
+
+#### Diagrama de dependencias
+
+```
+schemas ← project_io ← api_client ← layout_rules ← safeguards ← proportions ← review ← orchestrator
+```
+
+Cada módulo importa solo de los anteriores. **Sin ciclos**.
+
+#### Compatibilidad hacia atrás
+
+`core/script_generator.py` reexporta todos los símbolos públicos, así que los imports existentes siguen funcionando:
+
+```python
+from core.script_generator import generate_script, Scene, ScriptManifest
+```
+
+El CLI también sigue funcionando:
+
+```bash
+python -m core.script_generator --duration 60 --type short --ratio 16:9 --style cartoon_2d_cellshaded
+```
+
+### 5.4 Reglas de diseño para prompts visuales
 
 Estas reglas se derivaron de experimentos sistemáticos con múltiples modelos (FLUX Schnell, FLUX Dev, FLUX.2 Klein, Gemini Image) y son **críticas** para que la composición de las escenas se respete.
 
@@ -282,13 +340,19 @@ Estilos problemáticos históricamente:
 - `doodle_cartoon_landscape` (~500 chars → ignora todo).
 - `stick_classic_klein` (reducido a 99 chars → funciona bien).
 
-#### Regla 4 — La aleatoriedad del modelo es inevitable
+#### Regla 4 — Sujeto explícito, no implícito
+
+El `visual_prompt` **no debe añadir personajes** que la escena no mencione explícitamente. El estilo describe **cómo** se renderiza, no **qué** debe aparecer.
+
+**Aplicación:** si la escena no menciona personas, el `visual_prompt` describe solo los objetos, partículas o símbolos. Si menciona personas, se usa el término correcto según el estilo (`a cartoon man`, `a stick figure`, etc.).
+
+#### Regla 5 — La aleatoriedad del modelo es inevitable
 
 El mismo prompt con distinto seed produce variaciones. Para mantener consistencia entre escenas, se puede fijar el seed (`preferred_seed`). Por defecto, `stick_classic_klein` usa seed=100.
 
 **Cuidado:** el mismo seed con distinto prompt produce resultados distintos. El seed fija el ruido inicial, no la composición final.
 
-#### Regla 5 — Klein para escenas simples, Gemini para complejas
+#### Regla 6 — Klein para escenas simples, Gemini para complejas
 
 FLUX.2 Klein 4B (NVIDIA) es excelente para **personajes aislados o escenas muy simples**. Falla en composiciones complejas con múltiples elementos interactuando.
 
@@ -312,7 +376,7 @@ python core/trend_analyzer.py --url "https://www.youtube.com/watch?v=EXAMPLE_ID"
 
 ### 3. Regenerar solo el Guion para un tema específico
 ```bash
-python core/script_generator.py --duration 60 --type short --ratio 9:16 --lang es
+python -m core.script_generator --duration 60 --type short --ratio 9:16 --lang es
 ```
 
 ### 4. Regenerar el Audio de una Escena Específica
@@ -322,7 +386,7 @@ python core/voice_generator.py --scene 3 --rate "+5%"
 
 ### 5. Regenerar Imágenes de un Rango de Escenas
 ```bash
-python core/media_fetcher.py --scene "2-5" --force
+python -m core.media_fetcher --scene "2-5" --force
 ```
 
 ### 6. Componer la Miniatura Gráfica
@@ -378,6 +442,7 @@ MIN_FULL_ART_RATIO = 0.60
 | `Timeout en NVIDIA` tras varios intentos | Rate limit o servicio lento | El proveedor reintenta con backoff. Si persiste, esperar unos minutos o usar `--provider fal`. |
 | Imagen en blanco (todo blanco) con NVIDIA | FLUX.1-dev con prompt problemático en NVIDIA | Usar `flux.2-klein-4b` en su lugar (el proveedor `nvidia` ya lo selecciona por defecto). |
 | `cannot access local variable 'manifest'` | Referencia a `manifest` antes de cargarlo | Ordenar el código: cualquier función que lea del manifest debe ejecutarse después del `json.load()`. |
+| `ModuleNotFoundError: No module named 'core'` al ejecutar `python core/X.py` | El archivo se ejecuta como script, no como módulo | Usar `python -m core.X` o añadir el bootstrap de `sys.path`. |
 
 ---
 
@@ -397,12 +462,11 @@ MIN_FULL_ART_RATIO = 0.60
 
 | Sección | Cambio |
 |---|---|
-| **1** | Añadido NVIDIA Build a Tecnologías Clave y APIs Externas. Diagrama actualizado con `media_fetcher` orquestador. |
-| **2** | Añadida `NVIDIA_API_KEY` al `.env`. Mención a `assets/fonts/` en prerrequisitos. |
-| **3** | Estructura completa con `assets/`, `overlays/`, `providers/`, `renderers/`, `fonts.py`. |
-| **4** | Añadido estándar 6 (separación de responsabilidades). |
-| **5** | Ampliada con 5.1 (fuentes), 5.2 (media_fetcher refactor), 5.3 (reglas de prompts). Añadido `code_graphic_visual` como layout. |
-| **6** | Comandos 8-11 (NVIDIA, OpenRouter, tests, configuración). |
-| **7** | Añadidas 5 filas nuevas de troubleshooting. |
-| **8** | Añadido NVIDIA Build a referencias. |
-
+| **1** | Diagrama actualizado: `script_generator.py` se muestra como fachada + CLI; se añade rama `generation/` al diagrama. |
+| **3** | Estructura añade el subpaquete `core/generation/` con sus 8 módulos. `script_generator.py` renombrado a "Fachada pública + CLI". |
+| **4** | Estándar 6 reescrito para mencionar `script_generator.py` además de `media_fetcher.py`, y los subpaquetes `generation/`, `renderers/`, etc. |
+| **5.1** | `allowed_layouts` del ejemplo actualizado para incluir `code_graphic_visual`. |
+| **5.3** | Nueva sección: "Arquitectura del paquete `generation` (refactor 2026-10)" con tabla de módulos, diagrama de dependencias y compatibilidad hacia atrás. |
+| **5.4** | Antigua 5.3 renumerada a 5.4. Añadida "Regla 4 — Sujeto explícito, no implícito". Reordenadas las reglas 5 y 6. |
+| **6** | Comandos 3 y 5 cambiados a `python -m core.X` para reflejar el estándar moderno. |
+| **7** | Añadida fila de troubleshooting para `ModuleNotFoundError: No module named 'core'`. |

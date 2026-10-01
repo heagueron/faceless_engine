@@ -284,7 +284,7 @@ STYLE_PROMPTS: Dict[str, Dict[str, Any]] = {
             "title": HAND_DRAWN_FONT,
             "body": HAND_DRAWN_FONT,
         },
-        "allowed_layouts": ["full_art", "code_graphic", "code_graphic_visual"],
+        "allowed_layouts": ["full_art"],
         # Schnell es el motor principal: barato y respeta prompts cortos.
         "preferred_provider": "fal",
         "preferred_model": "fal-ai/flux-1/schnell",
