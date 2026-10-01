@@ -52,14 +52,25 @@ STYLE_PROMPTS: Dict[str, Dict[str, Any]] = {
         "text_safe": True,
         "allowed_layouts": ["full_art", "split_right", "code_graphic", "code_graphic_visual"],
     },
+    "cartoon_2d_qwen": {
+        "description": "Cartoon 2D clasico",
+        "prompt":("bold outlines, flat colors, exaggerated expressions, "
+                  "clean vector style, vibrant palette. "),
+        "background_rules": "spacious uncluttered composition, flat clean background",
+        "text_safe": False,
+        "fonts": {
+            "title": HAND_DRAWN_FONT,
+            "body": HAND_DRAWN_FONT,
+        },
+        "allowed_layouts": ["full_art", "code_graphic", "code_graphic_visual"],
+    },
     "cartoon_2d_cellshaded": {
         "description": "Cartoon 2D con cell-shading (estilo actual del proyecto).",
         "prompt": (
-            "Clean 2D vector cartoon illustration, cell-shaded style. "
-            "Characters: Expressive 2D cartoon human figures with natural skin tones, "
-            "clear facial features, classic hairstyles, and simple textured clothing."
+            "Clean 2D vector cartoon illustration style, cell-shaded. "
+            "Flat solid colors, clean shading, simple uncluttered composition."
         ),
-        "background_rules": "spacious uncluttered composition, soft depth of field",
+        "background_rules": "spacious uncluttered composition, flat clean background",
         "text_safe": False,
         "fonts": {
             "title": HAND_DRAWN_FONT,
@@ -263,10 +274,10 @@ STYLE_PROMPTS: Dict[str, Dict[str, Any]] = {
         ),
         "prompt": (
             "Classic stick figure, round white head, dot eyes, "
-            "thin black lines, no shading, pure white background."
+            "thick black lines, no shading, "
         ),
         "background_rules": (
-            "pure white background, thin black lines only"
+            "thick lines flat background,"
         ),
         "text_safe": False,
         "fonts": {

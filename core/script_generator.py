@@ -282,8 +282,24 @@ def apply_prompt_safeguards(
         m.strip().lower() for m in bg_rules.split(",") if m.strip()
     ] if bg_rules else []
 
+    def _strip_embedded_style(p: str) -> str:
+        """
+        Si el prompt contiene el estilo embebido, cortar todo lo que viene después
+        del inicio del estilo. Es defensa contra el LLM, que a veces incluye el
+        estilo en el 'visual_prompt' aunque se le indique que no lo haga.
+        """
+        # Detectar la firma del estilo (primeras palabras clave)
+        style_marker_lower = style_marker.lower()
+        p_lower = p.lower()
+        idx = p_lower.find(style_marker_lower)
+        if idx > 20:  # >20 para no cortar si el estilo empieza al principio (raro)
+            # Cortar antes del estilo
+            return p[:idx].rstrip(" ,.")
+        return p
+
     def _apply_to_prompt(prompt: str, layout: str) -> str:
         prompt = _clean_prompt(prompt or "")
+        prompt = _strip_embedded_style(prompt)  # ← NUEVO
 
         # 1. Estilo (prefijo)
         if style_marker.lower() not in _normalize(prompt):
@@ -518,23 +534,45 @@ Cantidad total de escenas requeridas: {target_scenes} escenas.
 
     layout_rules_block = _build_layout_rules(style_key)
 
-    # --- Regla de longitud de prompt para estilos con preferred_provider de bajo coste ---
-    # Estilos como stick_classic_klein con Schnell/Klein necesitan prompts cortos
-    # para que el modelo no colapse al sujeto y respete la escena.
-    style_meta = STYLE_PROMPTS[get_style_key(style_key)]
-    if style_meta.get("preferred_provider") in ("fal", "nvidia"):
+    # --- Regla de longitud de prompt para estilos específicos (bajo coste) ---
+    # Solo se aplica al estilo stick_classic_klein, que requiere prompts muy cortos
+    # para que Schnell/Klein respeten la escena. Otros estilos usan prompts más largos.
+    style_key_resolved = get_style_key(style_key)
+    if style_key_resolved == "stick_classic_klein":
         prompt_length_block = (
             "REGLA CRÍTICA DE LONGITUD DE PROMPT:\n"
             "El campo 'visual_prompt' debe ser CORTO: máximo 150 caracteres en total. "
-            "Describe la escena en UNA sola frase sencilla. Ejemplos válidos:\n"
-            "  - 'A stick figure being crushed under a giant house on its back, shocked expression.'\n"
-            "  - 'A stick figure pointing at a large golden coin on a table.'\n"
-            "  - 'A stick figure holding a small red flag, proud expression.'\n"
+            "Describe la escena en UNA sola frase sencilla. "
+            "Estructura: [SUJETO] [ACCIÓN] [CONTEXTO BREVE].\n"
+            "Ejemplo genérico de estructura (NO copiar literalmente el sujeto):\n"
+            "  '[personaje del estilo del proyecto] realizando [una sola acción] en [contexto breve]'.\n"
             "NO repitas el estilo en el 'visual_prompt'. NO incluyas reglas de fondo. "
             "NO describas múltiples acciones. UNA escena, UN sujeto principal, UNA acción."
         )
     else:
         prompt_length_block = ""
+
+    subject_rules_block = (
+        "REGLA DEL SUJETO DEL 'visual_prompt':\n"
+        "Cuando el 'visual_prompt' describa un personaje, usa el término apropiado "
+        "según el ESTILO VISUAL DEL PROYECTO (indicado arriba). Ejemplos:\n"
+        "  - Estilo 'cartoon_2d_cellshaded' o 'doodle_cartoon_landscape': "
+        "usa 'a cartoon man', 'a cartoon woman', 'a cartoon character'.\n"
+        "  - Estilo 'stick_classic_klein': usa 'a stick figure'.\n"
+        "  - Estilo 'flat_editorial_2d_lite': usa 'a simple humanoid figure'.\n"
+        "  - Estilo 'documentary_stickman_flow': usa 'a stick figure'.\n"
+        "PROHIBIDO usar 'stick figure' en estilos que NO son de stick figures. "
+        "PROHIBIDO mezclar terminología de estilos distintos en la misma escena.\n"
+        "El sujeto debe ser coherente con la descripción del estilo, no con un "
+        "ejemplo genérico.\n"
+        "\n"
+        "REGLA ADICIONAL DE SUJETO:\n"
+        "Si la escena NO menciona explícitamente figuras humanas, personajes o "
+        "seres vivos, el 'visual_prompt' NO debe incluirlos. Describe solo los "
+        "objetos, partículas, símbolos, entornos u otros elementos que la narración "
+        "requiera. NO añadas personajes 'por defecto' solo porque el estilo visual "
+        "los menciona."
+    )
 
     # Bloque de proporción de layouts (construido dinámicamente desde config)
     allowed = STYLE_PROMPTS[style_key].get("allowed_layouts", [])
@@ -649,6 +687,42 @@ Cantidad total de escenas requeridas: {target_scenes} escenas.
             "is_interactive_cta": false
         }}"""
 
+    visual_prompt_rules_block = (
+        "REGLAS DE PROMPT VISUAL ('visual_prompt') — CRÍTICAS:\n"
+        "Si layout_type NO es 'code_graphic' ni 'code_graphic_visual', "
+        "'visual_prompt' DEBE estar en INGLÉS.\n"
+        "ESTRUCTURA OBLIGATORIA del 'visual_prompt': SOLO la descripción de la escena.\n"
+        "NO incluyas NUNCA:\n"
+        "  - El estilo visual del proyecto (ej. 'Clean 2D vector cartoon illustration', 'Classic stick figure').\n"
+        "  - Reglas de fondo (ej. 'spacious uncluttered composition', 'pure white background').\n"
+        "  - Reglas anti-texto (ej. 'no text', 'without any text').\n"
+        "  - Directivas de aspect ratio (ej. '16:9', 'horizontal widescreen ratio').\n"
+        "El pipeline añade TODOS esos elementos automáticamente después. Si los incluyes, "
+        "se duplicarán y el prompt resultante quedará demasiado largo.\n"
+        "\n"
+        "Ejemplo INCORRECTO (NO hagas esto):\n"
+        "  'A cartoon man standing in front of a graduation hall Clean 2D vector cartoon "
+        "illustration, cell-shaded style. Characters: Expressive 2D cartoon human figures..., "
+        "spacious uncluttered composition, soft depth of field, no text, 16:9.'\n"
+        "\n"
+        "Ejemplo CORRECTO:\n"
+        "  'A cartoon man standing in front of a graduation hall, smiling brightly.'\n"
+        "\n"
+        "La diferencia: el INCORRECTO incluye estilo, fondo y ratio. El CORRECTO solo "
+        "describe la escena.\n"
+        "\n"
+        "Longitud máxima del 'visual_prompt': 150 caracteres."
+        "NOTA SOBRE EL ESTILO: El estilo visual del proyecto describe CÓMO se renderizan los elementos, "
+        "no QUÉ elementos deben aparecer. Si la escena no menciona personas, "
+        "NO las incluyas aunque el estilo mencione 'human figures'."
+    )
+
+    final_reminder = (
+        "\nRECORDATORIO FINAL:\n"
+        "El 'visual_prompt' NO incluye estilo, ni reglas de fondo, ni 'no text', "
+        "ni ratio. El pipeline los añade automáticamente. Si los ves en tu respuesta, "
+        "está MAL."
+    )
 
     batch_system_prompt = f"""
 Eres un director de arte y guionista experto en videos educativos de economía y finanzas en estilo animación 2D vectorial limpia (cell-shaded).
@@ -658,6 +732,10 @@ REGLAS STRICTAS DE IDIOMA:
 1. 'narration_text' MUST be written strictly in {lang_name}.
 2. 'overlay_content' ('title' and 'bullets') MUST be written strictly in {lang_name}.
 3. 'visual_prompt' MUST ALWAYS be written strictly in ENGLISH (regardless of target language).
+
+{visual_prompt_rules_block}
+
+{subject_rules_block}
 
 {layout_rules_block}
 
@@ -671,15 +749,8 @@ REGLAS STRICTAS DE IDIOMA:
 
 {prompt_length_block}
 
-REGLAS DE PROMPT VISUAL ('visual_prompt'):
-Si layout_type NO es 'code_graphic', 'visual_prompt' DEBE estar escrito en INGLÉS.
-NO incluyas el estilo ni reglas de fondo en el 'visual_prompt'. El pipeline los añade automáticamente después.
-Solo describe la escena: sujeto principal + acción + un contexto mínimo.
-Ejemplos válidos:
-  - 'A stick figure being crushed under a giant house on its back, shocked expression.'
-  - 'A stick figure pointing at a large golden coin on a table.'
-  - 'A stick figure standing on a hill, looking at a bright sunrise.'
-La longitud máxima del 'visual_prompt' es 150 caracteres.
+{final_reminder}
+
 
 REGLAS CRÍTICAS DE COMPLEJIDAD VISUAL (OBLIGATORIAS):
 1. UN SOLO FOCO POR ESCENA: Cada 'visual_prompt' describe UNA sola escena concreta con MÁXIMO 2-3 elementos principales. NO combines múltiples metáforas en una misma imagen.
@@ -688,6 +759,7 @@ REGLAS CRÍTICAS DE COMPLEJIDAD VISUAL (OBLIGATORIAS):
 4. SIMPLIFICACIÓN NARRATIVA: Si la narración es compleja, elige el elemento MÁS representativo y descarta los demás. Es mejor una imagen simple y clara que una sobrecargada y confusa.
 5. ACCIONES SIMPLES DE PERSONAJE: Los personajes deben tener UNA acción simple y clara. Bien: "señalando un calendario", "mirando una pantalla con sorpresa". Mal: "alineando discos con engranajes mientras guía un río".
 6. EVITAR SUPERFICIES CON TEXTO POTENCIAL: No describas fachadas de tiendas, carteles, menús, periódicos, libros abiertos, pantallas con texto o etiquetas. Si la narración requiere esos elementos, descríbelos como "una forma geométrica abstracta" o "un rectángulo de color plano" en lugar de un objeto con texto legible.
+
 
 Esquema JSON requerido para este lote:
 {{

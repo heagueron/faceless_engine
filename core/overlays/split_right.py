@@ -34,7 +34,7 @@ def apply_split_right_overlay(
             width, height = img.size
 
             card_left = int(width * 0.67)
-            card_top = int(height * 0.10)
+            card_top = int(height * 0.50) # antes 0.10
             card_right = int(width * 0.97)
             card_bottom = int(height * 0.90)
 
