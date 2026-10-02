@@ -31,8 +31,8 @@ STYLE_PROMPTS: Dict[str, Dict[str, Any]] = {
     "stick_figure_minimalist": {
         "description": "Stick figures minimalistas en blanco y negro, alto contraste, humor limpio.",
         "prompt": (
-            "minimalist black and white stick figure illustration, simple clean line art, "
-            "pure white background, humorous expressive poses, vector style, high clarity"
+            "simple black line drawing, 2D minimalist doodle, ",
+            "isolated on plain white background, no shading, no gradients, no 3D, "
         ),
         "background_rules": "pure solid white background, no gradients, no texture",
         "text_safe": True,
@@ -40,7 +40,7 @@ STYLE_PROMPTS: Dict[str, Dict[str, Any]] = {
             "title": HAND_DRAWN_FONT,
             "body": HAND_DRAWN_FONT,
         },
-        "allowed_layouts": ["full_art", "split_right", "code_graphic", "code_graphic_visual"],
+        "allowed_layouts": ["full_art", "code_graphic", "code_graphic_visual"],
     },
     "flat_vector": {
         "description": "Ilustración vectorial plana moderna, colores vibrantes, estilo corporativo.",

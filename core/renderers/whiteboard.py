@@ -19,22 +19,54 @@ COLOR_BULLET_TEXT = (30, 30, 30)      # tinta oscura del texto
 
 # --- Configuración del explainer ---
 _EXPLAINERS_DIR = os.path.join(get_project_root(), "assets", "explainers")
+_CHANNELS_DIR = os.path.join(get_project_root(), "assets", "channels")
 DEFAULT_EXPLAINER_STYLE = "cartoon_2d_cellshaded"
 DEFAULT_EXPLAINER_POSE = "pointer.png"
 
+def _resolve_explainer_path(
+    style: str,
+    filename: str,
+    channel: Optional[str] = None,
+) -> Optional[str]:
+    """
+    Resuelve la ruta del explainer con la siguiente prioridad:
+      1. assets/channels/[channel]/explainers/[filename]
+      2. assets/explainers/[style]/[filename]
+      3. None si no existe ninguno
+    """
+    candidates = []
+    if channel:
+        candidates.append(
+            os.path.join(_CHANNELS_DIR, channel, "explainers", filename)
+        )
+    candidates.append(
+        os.path.join(_EXPLAINERS_DIR, style, filename)
+    )
 
-def _load_explainer(style: str, pose_filename: str) -> Optional[Image.Image]:
+    for c in candidates:
+        if os.path.exists(c):
+            return c
+    return None
+
+
+def _load_explainer(
+    style: str,
+    filename: str,
+    channel: Optional[str] = None,
+) -> Optional[Image.Image]:
     """Carga el PNG del explainer con transparencia. Retorna None si no existe."""
-    path = os.path.join(_EXPLAINERS_DIR, style, pose_filename)
-    if not os.path.exists(path):
-        print(f"   ⚠️ Explainer no encontrado en: {path}")
+    path = _resolve_explainer_path(style, filename, channel)
+    if not path:
+        print(
+            f"   ⚠️ Explainer no encontrado "
+            f"(style='{style}', channel='{channel}', file='{filename}')"
+        )
         return None
     try:
         return Image.open(path).convert("RGBA")
     except Exception as e:
         print(f"   ⚠️ Error al cargar explainer '{path}': {e}")
         return None
-
 
 def render_whiteboard(
     output_path: str,
@@ -44,6 +76,7 @@ def render_whiteboard(
     fonts: Optional[Dict[str, str]] = None,
     explainer_style: str = DEFAULT_EXPLAINER_STYLE,
     explainer_pose: str = DEFAULT_EXPLAINER_POSE,
+    explainer_channel: Optional[str] = None,
 ) -> None:
     """
     Renderiza una pizarra blanca con bullets grandes a la derecha del frame
@@ -61,7 +94,7 @@ def render_whiteboard(
         width, height = 1920, 1080
 
     # --- Cargar explainer ---
-    explainer_img = _load_explainer(explainer_style, explainer_pose)
+    explainer_img = _load_explainer(explainer_style, explainer_pose, explainer_channel)
     has_explainer = explainer_img is not None
 
     # --- Distribución horizontal según presencia del explainer ---

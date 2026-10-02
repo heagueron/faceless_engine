@@ -470,3 +470,155 @@ MIN_FULL_ART_RATIO = 0.60
 | **5.4** | Antigua 5.3 renumerada a 5.4. Añadida "Regla 4 — Sujeto explícito, no implícito". Reordenadas las reglas 5 y 6. |
 | **6** | Comandos 3 y 5 cambiados a `python -m core.X` para reflejar el estándar moderno. |
 | **7** | Añadida fila de troubleshooting para `ModuleNotFoundError: No module named 'core'`. |
+
+
+
+
+---
+
+# Fase 5 — Documentación
+
+Actualizar `ARCHITECTURE.md` con las nuevas piezas:
+
+1. **Sección 3** (Project Structure): añadir la rama `assets/channels/[canal]/explainers/`.
+2. **Sección 5.3** (o nueva): documentar el sistema de resolución de explainers por canal.
+3. **Sección 6** (Common Tasks): añadir el comando con `--channel`.
+4. **Sección 7** (Troubleshooting): añadir filas para problemas de canal.
+
+---
+
+## Cambio 1 — Sección 3 (`Project Structure`)
+
+Reemplaza el bloque de `assets/`:
+
+```
+├── assets/
+│   ├── fonts/                   # Fuentes TTF (Patrick Hand, DejaVu, etc.)
+│   │   └── PatrickHand-Regular.ttf
+│   ├── explainers/              # Explainers GENÉRICOS por estilo (fallback)
+│   │   └── cartoon_2d_cellshaded/
+│   │       └── pointer.png
+│   └── channels/                # Personalizaciones por canal
+│       ├── en_clave_monetaria/
+│       │   ├── explainers/
+│       │   │   └── pointer.png
+│       │   ├── fonts/           # (futuro)
+│       │   └── logos/           # (futuro)
+│       └── real_mente/
+│           ├── explainers/
+│           │   └── pointer.png
+│           ├── fonts/
+│           └── logos/
+```
+
+---
+
+## Cambio 2 — Nueva sección 5.5
+
+Añadir **después** de 5.4 (reglas de prompts), como nueva subsección:
+
+```markdown
+### 5.5 Sistema multi-canal y resolución de explainers
+
+El motor soporta múltiples canales con personalización de assets. El canal
+activo se resuelve al arrancar el pipeline y se guarda en el manifest.
+
+#### Flujo de selección de canal
+
+```
+[Pipeline arranca]
+        │
+        ▼
+  ¿Se pasó --channel en CLI?
+   ├─ Sí → usar ese
+   └─ No → prompt interactivo (escanea assets/channels/)
+        │
+        ▼
+  Guardar en manifest.json como "channel"
+```
+
+No hay persistencia entre ejecuciones: **cada arranque del pipeline pregunta**
+(salvo que se pase `--channel X`). Esto evita que un canal de un proyecto
+anterior contamine el siguiente.
+
+#### Estructura de assets por canal
+
+```
+assets/
+├── explainers/                       # Fallback genérico por estilo
+│   └── cartoon_2d_cellshaded/
+│       └── pointer.png
+└── channels/
+    ├── en_clave_monetaria/
+    │   └── explainers/
+    │       └── pointer.png           # Emfel (override del canal)
+    └── real_mente/
+        └── explainers/
+            └── pointer.png           # Profesor (override del canal)
+```
+
+#### Resolución de explainers (`whiteboard.py::_resolve_explainer_path`)
+
+Orden de prioridad al cargar un explainer:
+
+1. `assets/channels/[channel]/explainers/[filename]` — override por canal.
+2. `assets/explainers/[style]/[filename]` — genérico por estilo.
+3. `None` si no existe ninguno.
+
+**Aplicación:** Los layouts `code_graphic_visual` usan el explainer resuelto.
+El estilo determina el "lenguaje visual" del explainer; el canal permite
+overridearlo con la imagen de marca del canal.
+
+#### Reglas de diseño
+
+- **Un canal puede compartir el estilo con otro** pero tener explainer propio.
+- **Si no hay override por canal**, se usa el genérico del estilo.
+- **Los canales se descubren escaneando** `assets/channels/` (no hay lista hardcodeada).
+- **El identificador del canal** debe ser ASCII, sin espacios ni tildes
+  (ej. `en_clave_monetaria`, `real_mente`).
+```
+
+---
+
+## Cambio 3 — Sección 6 (Common Tasks)
+
+Añadir **dos comandos nuevos** al final:
+
+```markdown
+### 12. Ejecutar el pipeline para un canal específico (saltando el prompt)
+
+```bash
+python -m core.script_generator --duration 60 --type short --ratio 9:16 --style cartoon_2d_cellshaded --channel en_clave_monetaria
+```
+
+### 13. Regenerar una escena `code_graphic_visual` con el explainer del canal
+
+El canal se lee del manifest del proyecto, así que no hay que pasar nada:
+
+```bash
+python -m core.media_fetcher --scene 5 --force
+```
+```
+
+---
+
+## Cambio 4 — Sección 7 (Troubleshooting)
+
+Añadir dos filas:
+
+| Síntoma | Causa Probable | Solución |
+|---|---|---|
+| El explainer no aparece en `code_graphic_visual` | El PNG no existe en ninguna ruta de resolución | Verifica `assets/channels/[canal]/explainers/pointer.png` o `assets/explainers/[estilo]/pointer.png`. |
+| El explainer es el genérico en lugar del canal | El `channel` del manifest es `None` o no coincide con ninguna carpeta | Regenera el guion pasando `--channel [nombre]`, o edita el manifest y regenera la escena. |
+
+---
+
+## Cambio 5 — Ampliar la sección 4 (Development Workflow)
+
+Añadir un séptimo estándar:
+
+```markdown
+7. **Multi-canal con override opcional:** Los assets personalizables por canal (explainers, fuentes, logos) viven en `assets/channels/[canal]/`. Si no existen, se cae al asset genérico en `assets/[tipo]/`. El pipeline nunca requiere que todos los canales tengan assets propios.
+```
+
+

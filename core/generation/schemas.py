@@ -16,7 +16,6 @@ class OverlayContent(BaseModel):
         description="Lista de 1 a 3 puntos clave o datos breves a superponer."
     )
 
-
 class Scene(BaseModel):
     scene_number: int = Field(description="Número secuencial de la escena (1, 2, 3...)")
     narration_text: str = Field(description="Texto en español que dirá la voz en off para esta escena")
@@ -45,9 +44,13 @@ class Scene(BaseModel):
     audio_duration_seconds: Optional[float] = Field(default=None, description="Duración exacta en segundos del audio")
     image_path: Optional[str] = Field(default=None, description="Ruta a la imagen o video generado para la escena")
 
-
 class ScriptManifest(BaseModel):
     language: str = Field(default="es", description="Código de idioma del proyecto ('es', 'en', 'pt', etc.)")
+
+    channel: Optional[str] = Field(
+        default=None,
+        description="Identificador del canal (carpeta en assets/channels/). Opcional."
+    )
 
     visual_style: str = Field(
         default="cartoon_2d_cellshaded",

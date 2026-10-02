@@ -81,6 +81,12 @@ if __name__ == "__main__":
         default=None,
         help=f"Clave del estilo visual. Disponibles: {', '.join(list_available_styles().keys())}"
     )
+    parser.add_argument(
+        "--channel",
+        type=str,
+        default=None,
+        help="Identificador del canal (carpeta en assets/channels/). Si se omite, se pregunta interactivamente."
+    )
 
     args = parser.parse_args()
     generate_script(
@@ -90,4 +96,5 @@ if __name__ == "__main__":
         model=args.model,
         language=args.lang,
         style=args.style,
+        channel=args.channel,           # ← NUEVO
     )

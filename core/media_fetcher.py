@@ -344,6 +344,7 @@ def process_scene_media(
                 aspect_ratio=aspect_ratio,
                 fonts=fonts,
                 explainer_style=manifest.get("visual_style", "cartoon_2d_cellshaded"),
+                explainer_channel=manifest.get("channel"),    # ← NUEVO
             )
             success = True
         else:

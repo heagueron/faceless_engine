@@ -36,8 +36,11 @@ from core.generation.api_client import call_openrouter_api, _parse_json_safely
 from core.generation.layout_rules import _build_layout_rules, _has_overlay_layouts
 from core.generation.safeguards import apply_prompt_safeguards
 from core.generation.proportions import _enforce_layout_proportions
-from core.generation.review import display_and_review_script, _prompt_style_interactive
-
+from core.generation.review import (
+    display_and_review_script, 
+    _prompt_style_interactive,
+    _prompt_channel_interactive,   # ← NUEVO
+)
 
 # Mapeo auxiliar para indicarle al LLM el nombre del idioma en inglés
 LANGUAGE_NAMES = {
@@ -55,7 +58,8 @@ def generate_script_from_openrouter(
     model: str = "google/gemini-3.7-flash",
     batch_size: int = 15,
     language: str = TARGET_LANGUAGE,
-    style_key: str = "cartoon_2d_cellshaded"
+    style_key: str = "cartoon_2d_cellshaded",
+    channel: Optional[str] = None,     # ← NUEVO
 ) -> Optional[ScriptManifest]:
     """Genera el guion dividiendo la tarea en Escaleta Global + Lotes para evitar desbordamiento de tokens."""
     topic = idea_data.get("topic", "")
@@ -430,6 +434,7 @@ Instrucciones: Devuelve el objeto JSON 'scenes' correspondiente EXCLUSIVAMENTE a
 
     manifest_dict = {
         "language": language,
+        "channel": channel,             # ← NUEVO
         "visual_style": style_key,
         "visual_style_prompt": get_style_prompt(style_key),
         "visual_style_fonts": get_style_fonts(style_key),
@@ -462,11 +467,23 @@ def generate_script(
     project_dir: Optional[str] = None,
     language: str = TARGET_LANGUAGE,
     style: Optional[str] = None,
+    channel: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Flujo completo de generación, aprobación y almacenamiento del guion."""
     print("\n" + "=" * 85)
     print(" 🎬 GENERADOR DE GUIONES PARA FACELESS ENGINE")
     print("=" * 85)
+
+    # --- Resolución del canal (ANTES del estilo) ---
+    # Prioridad: --channel explícito > prompt interactivo > None
+    # No hay persistencia: cada ejecución pregunta (salvo --channel).
+    if channel is None:
+        channel = _prompt_channel_interactive()
+
+    if channel:
+        print(f"📺 Canal seleccionado: '{channel}'")
+    else:
+        print(f"📺 Sin canal específico (se usará explainer genérico)")
 
     style_key = get_style_key(style or _prompt_style_interactive())
 
@@ -498,6 +515,7 @@ def generate_script(
         model=model,
         language=language,
         style_key=style_key,
+        channel=channel,                # ← NUEVO
     )
 
     if not manifest:

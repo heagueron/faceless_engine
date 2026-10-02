@@ -21,9 +21,9 @@ def get_language_directive() -> str:
 
 LAYOUT_PROPORTION_GUIDE = {
     "full_art":             (0.60, 0.75),
-    "split_right":          (0.10, 0.20),
+    "split_right":          (0.05, 0.10),
     "code_graphic":         (0.05, 0.15),
-    "code_graphic_visual":  (0.00, 0.10),
+    "code_graphic_visual":  (0.10, 0.20),
 }
 
 # Umbral duro: si tras la generación 'full_art' está por debajo de este ratio,

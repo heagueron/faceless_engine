@@ -136,3 +136,49 @@ def _prompt_style_interactive() -> Optional[str]:
 
     print(f"⚠️ Estilo '{choice}' no reconocido. Usando default.")
     return DEFAULT_STYLE_KEY
+
+def _prompt_channel_interactive() -> Optional[str]:
+    """
+    Pregunta al usuario qué canal usar si el script corre en TTY.
+    Descubre los canales disponibles escaneando assets/channels/.
+    Retorna None si el usuario elige "sin canal específico".
+    """
+    if not sys.stdin.isatty():
+        return None
+
+    import os
+    channels_dir = os.path.join("assets", "channels")
+    if not os.path.isdir(channels_dir):
+        return None
+
+    available = sorted([
+        d for d in os.listdir(channels_dir)
+        if os.path.isdir(os.path.join(channels_dir, d))
+    ])
+    if not available:
+        return None
+
+    print("\n" + "=" * 60)
+    print(" 📺 SELECCIÓN DE CANAL")
+    print("=" * 60)
+    for i, name in enumerate(available, 1):
+        print(f"  [{i}] {name}")
+    print("  [0] Sin canal específico (usar explainer genérico)")
+    print("=" * 60)
+
+    choice = input("\n👉 Selecciona canal [ENTER = 0]: ").strip()
+    if not choice or choice == "0":
+        return None
+
+    if choice.isdigit():
+        idx = int(choice) - 1
+        if 0 <= idx < len(available):
+            return available[idx]
+        print("⚠️ Número fuera de rango. Se usará sin canal.")
+        return None
+
+    if choice in available:
+        return choice
+
+    print(f"⚠️ Canal '{choice}' no reconocido. Se usará sin canal.")
+    return None
