@@ -19,6 +19,7 @@ from core.styles import (
     get_style_key,
     STYLE_PROMPTS,
 )
+from core.generation.stick_detection import has_character, inject_character_block
 
 
 def apply_prompt_safeguards(
@@ -35,6 +36,9 @@ def apply_prompt_safeguards(
     style_meta = STYLE_PROMPTS[get_style_key(style_key)]
     allowed_layouts = style_meta.get("allowed_layouts", ["full_art", "split_right", "code_graphic"])
     default_layout = allowed_layouts[0]
+
+    # --- Bloque de personaje para estilos stick ---
+    character_prompt = style_meta.get("character_prompt")
 
     ratio_directive = "16:9" if aspect_ratio == "16:9" else "9:16"
 
@@ -92,6 +96,10 @@ def apply_prompt_safeguards(
         prompt = _clean_prompt(prompt or "")
         prompt = _strip_embedded_style(prompt)
 
+        # 0. Inyectar bloque de personaje si el estilo es stick y la escena lo pide
+        if character_prompt and has_character(prompt):
+            prompt = inject_character_block(prompt, character_prompt)
+            
         # 1. Estilo (prefijo)
         if style_marker.lower() not in _normalize(prompt):
             prompt = f"{prompt} {style_prompt} ".strip()

@@ -434,7 +434,8 @@ Instrucciones: Devuelve el objeto JSON 'scenes' correspondiente EXCLUSIVAMENTE a
 
     manifest_dict = {
         "language": language,
-        "channel": channel,             # ← NUEVO
+        "channel": channel,            
+        "source_idea": idea,                       # ← NUEVO: idea original
         "visual_style": style_key,
         "visual_style_prompt": get_style_prompt(style_key),
         "visual_style_fonts": get_style_fonts(style_key),

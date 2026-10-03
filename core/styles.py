@@ -31,8 +31,11 @@ STYLE_PROMPTS: Dict[str, Dict[str, Any]] = {
     "stick_figure_minimalist": {
         "description": "Stick figures minimalistas en blanco y negro, alto contraste, humor limpio.",
         "prompt": (
-            "simple black line drawing, 2D minimalist doodle, ",
-            "isolated on plain white background, no shading, no gradients, no 3D, "
+            "simple black line drawing, 2D minimalist doodle, "
+            "isolated on plain white background, no shading, no gradients, no 3D"
+        ),
+        "character_prompt": (
+            "simple stick figure with round head and dotted eyes"
         ),
         "background_rules": "pure solid white background, no gradients, no texture",
         "text_safe": True,
@@ -152,16 +155,20 @@ STYLE_PROMPTS: Dict[str, Dict[str, Any]] = {
             "Personaje doodle de cabeza blanca y guantes estilo clásico con ropa detallada, integrado en fondos cinemáticos de animación 2D "
         ),
         "prompt": (
-            "A frame from a high-end 2D animated feature film. "
-            "The main character is a hybrid doodle stickman: a smooth white spherical head with simple expressive black dot eyes, thin eyebrows and mouth, "
-            "classic white 4-finger cartoon gloves, white cartoon shoes, and thin black stick-figure legs. "
-            "The character is wearing detailed, stylized 2D clothing fully appropriate for the context of the scene."
- 
+            "Frame from a high-end 2D animated feature film, rich hand-painted "
+            "background with warm atmospheric lighting, volumetric light rays, "
+            "detailed painterly textures, cinematic depth of field"
+        ),
+        "character_prompt": (
+            "hybrid doodle stickman with a smooth white spherical head, simple "
+            "expressive black dot eyes, thin eyebrows, small mouth, classic white "
+            "4-finger cartoon gloves, white cartoon shoes, thin black stick-figure "
+            "legs, wearing detailed stylized 2D clothing"
         ),
         "background_rules": (
-            "The backdrop is a rich, hand-painted 2D animated film background with warm atmospheric lighting, "
-            "volumetric light rays, detailed textures, and cinematic depth of field. "
-            "Cohesive blending between the cartoon character features and the painterly background environment."
+            "rich hand-painted 2D animated film background with warm atmospheric "
+            "lighting, volumetric light rays, detailed textures, and cinematic "
+            "depth of field"
         ),
         "text_safe": True,
         "allowed_layouts": ["full_art"],
@@ -205,33 +212,27 @@ STYLE_PROMPTS: Dict[str, Dict[str, Any]] = {
             "Estilo híbrido tipo video educativo documental."
         ),
         "prompt": (
-            "Hybrid illustration style combining a flat 2D cartoon character "
-            "with a semi-realistic painted background. "
-            "Character: simple stickman figure with a perfectly round bone-white "
-            "head, thin black outline, minimal facial features with small oval "
-            "eyes, thin curved eyebrows, a small curved mouth, and a subtle short "
-            "vertical nose line, visible thin neck, torso with slight shoulder "
-            "volume and defined waist rendered as a closed flat-colored shape, "
-            "arms and legs drawn as thick black lines with rounded ends, "
-            "bone-white circular cartoon hands and feet, "
-            "simple flat-colored clothing like irregular animal-skin garments "
-            "with jagged edges, bold black outline around the character, "
-            "flat solid colors with no shading. "
-            "Background: semi-realistic digital painting with atmospheric fog, "
-            "soft color gradients, muted desaturated cold palette of greyish "
-            "greens, pale blues and dull browns, soft brush textures, "
-            "layered landscape silhouettes receding into mist, "
-            "cinematic composition with low horizon and wide sky, "
-            "no outlines on background elements, painterly soft edges. "
-            "Clean visual separation between the outlined cartoon character "
-            "and the atmospheric painted background."
-    ),
+            "Hybrid illustration style with a semi-realistic digital painted "
+            "background, atmospheric fog, soft color gradients, muted desaturated "
+            "cold palette of greyish greens, pale blues and dull browns, soft "
+            "brush textures, layered landscape silhouettes receding into mist, "
+            "cinematic composition with low horizon and wide sky, no outlines on "
+            "background elements, painterly soft edges"
+        ),
+        "character_prompt": (
+            "simple flat 2D stickman figure with a perfectly round bone-white head, "
+            "thin black outline, small oval eyes, thin curved eyebrows, a small "
+            "curved mouth, subtle vertical nose line, visible thin neck, torso with "
+            "slight shoulder volume and defined waist rendered as a closed "
+            "flat-colored shape, arms and legs drawn as thick black lines with "
+            "rounded ends, bone-white circular cartoon hands and feet, flat solid "
+            "colors with no shading, bold black outline around the character"
+        ),
         "background_rules": (
             "semi-realistic digital painting with atmospheric fog and soft "
             "gradients, muted desaturated cold palette, layered misty landscape, "
-            "no outlines on background, painterly soft edges, "
-            "character rendered flat with bold black outline on top of the painted scene"
-    ),
+            "no outlines on background, painterly soft edges"
+        ),
         "text_safe": True,
         "fonts": {
             "title": HAND_DRAWN_FONT,
@@ -245,15 +246,17 @@ STYLE_PROMPTS: Dict[str, Dict[str, Any]] = {
             "expresividad facial alta y fondos abstractos blancos."
         ),
         "prompt": (
-            "Simple stick figure cartoon character with a round white head, "
+            "Bold uniform black outlines around all elements, flat solid colors, "
+            "no shading, no gradients, clean white background with simple abstract "
+            "graphic elements, flat saturated colors, clean composition with "
+            "generous negative space"
+        ),
+        "character_prompt": (
+            "simple stick figure cartoon character with a round white head, "
             "thick bold black outlines, expressive facial features with arched "
             "eyebrows and clear eyes, minimal hair as a couple of black strokes "
             "on top, rectangular white torso, thick black line arms and legs "
-            "with rounded ends, simple mitten hands. "
-            "Bold uniform black outlines around the entire character, "
-            "flat solid colors, no shading, no gradients. "
-            "Clean white background with simple abstract graphic elements, "
-            "flat saturated colors, clean compositions with generous negative space."
+            "with rounded ends, simple mitten hands"
         ),
         "background_rules": (
             "clean white or pale background, thick black outlines on characters "
@@ -273,23 +276,24 @@ STYLE_PROMPTS: Dict[str, Dict[str, Any]] = {
             "manos tipo manopla. Optimizado para FLUX Schnell en fal.ai."
         ),
         "prompt": (
-            "Classic stick figure, round white head, dot eyes, "
-            "thick black lines, no shading, "
+            "Thick black outlines, flat colors, no shading, no gradients, "
+            "clean minimalist style"
         ),
-        "background_rules": (
-            "thick lines flat background,"
+        "character_prompt": (
+            "classic stick figure with a round white head, dot eyes, "
+            "small curved mouth, thin black line body and limbs, mitten hands"
         ),
+        "background_rules": "flat clean background, thick outlines",
         "text_safe": False,
         "fonts": {
             "title": HAND_DRAWN_FONT,
             "body": HAND_DRAWN_FONT,
         },
         "allowed_layouts": ["full_art"],
-        # Schnell es el motor principal: barato y respeta prompts cortos.
         "preferred_provider": "fal",
         "preferred_model": "fal-ai/flux-1/schnell",
         "preferred_seed": 100,
-},   
+    },  
 }
 
 DEFAULT_STYLE_KEY = "cartoon_2d_cellshaded"

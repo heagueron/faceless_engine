@@ -2,7 +2,7 @@
 Schemas Pydantic para el pipeline de generación de guiones.
 """
 
-from typing import List, Optional, Literal, Dict
+from typing import List, Optional, Literal, Dict, Any
 from pydantic import BaseModel, Field
 
 
@@ -50,6 +50,11 @@ class ScriptManifest(BaseModel):
     channel: Optional[str] = Field(
         default=None,
         description="Identificador del canal (carpeta en assets/channels/). Opcional."
+    )
+
+    source_idea: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Idea original que generó este guion (snapshot inmutable)."
     )
 
     visual_style: str = Field(
